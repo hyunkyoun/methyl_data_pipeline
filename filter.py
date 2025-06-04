@@ -2,10 +2,11 @@ import pandas as pd
 
 def remove_intensity_columns(input_file, output_file):
     # Read the Excel file
+    print(f"Reading input file: {input_file}")
     df = pd.read_excel(input_file)
     
     # Get columns that don't contain 'Intensity'
-    columns_to_keep = [col for col in df.columns if 'Intensity' not in str(col)]
+    columns_to_keep = [col for col in df.columns if 'AVG_Beta' in str(col) or 'TargetID' in str(col)]
     
     # Filter the dataframe
     filtered_df = df[columns_to_keep]
@@ -15,12 +16,17 @@ def remove_intensity_columns(input_file, output_file):
     
     print(f"Original columns: {len(df.columns)}")
     print(f"Filtered columns: {len(filtered_df.columns)}")
-    print(f"Removed {len(df.columns) - len(filtered_df.columns)} columns containing 'Intensity'")
+    print(f"Got {len(df.columns) - len(filtered_df.columns)} columns containing 'AVG_Beta'")
 
-def combine_sample_files(file1, file2, output_file, id_column='TargetID'):
+    return filtered_df
+
+def combine_sample_files(df1, df2, output_file, id_column='TargetID'):
     # Read both Excel files
-    df1 = pd.read_excel(file1)
-    df2 = pd.read_excel(file2)
+    # print(f"Reading input file: {file1}")
+    # df1 = pd.read_excel(file1)
+
+    # print(f"Reading input file: {file2}")
+    # df2 = pd.read_excel(file2)
     
     print(f"File 1 shape: {df1.shape} (TargetIDs: {len(df1)})")
     print(f"File 2 shape: {df2.shape} (TargetIDs: {len(df2)})")
@@ -57,4 +63,3 @@ def combine_sample_files(file1, file2, output_file, id_column='TargetID'):
 
 # Usage:
 # combined = combine_sample_files('file1.xlsx', 'file2.xlsx', 'combined_all_samples.xlsx')
-    
