@@ -1,6 +1,9 @@
 import pandas as pd
 
+# Function to remove intensity columns from an Excel file
+# input: input_file (str), output_file (str)
 def remove_intensity_columns(input_file, output_file):
+
     # Read the Excel file
     print(f"Reading input file: {input_file}")
     df = pd.read_excel(input_file)
@@ -20,14 +23,12 @@ def remove_intensity_columns(input_file, output_file):
 
     return filtered_df
 
-def combine_sample_files(df1, df2, output_file, id_column='TargetID'):
-    # Read both Excel files
-    # print(f"Reading input file: {file1}")
-    # df1 = pd.read_excel(file1)
 
-    # print(f"Reading input file: {file2}")
-    # df2 = pd.read_excel(file2)
+# Function to combine two sample files based on TargetID
+# input: df1 (DataFrame), df2 (DataFrame), output_file (str), id_column (str)
+def combine_sample_files(df1, df2, output_file, id_column='TargetID'):
     
+    # Check if input DataFrames are valid
     print(f"File 1 shape: {df1.shape} (TargetIDs: {len(df1)})")
     print(f"File 2 shape: {df2.shape} (TargetIDs: {len(df2)})")
     
@@ -60,6 +61,3 @@ def combine_sample_files(df1, df2, output_file, id_column='TargetID'):
     print("Note: Empty cells (NaN) indicate that TargetID didn't exist in that file")
     
     return combined_df
-
-# Usage:
-# combined = combine_sample_files('file1.xlsx', 'file2.xlsx', 'combined_all_samples.xlsx')

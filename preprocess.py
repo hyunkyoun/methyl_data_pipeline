@@ -2,6 +2,8 @@ import pandas as pd
 import numpy as np
 from combat.pycombat import pycombat
 
+# Function to apply ComBat normalization to combined sample files
+# input: file1_2 (str), file3_4 (str), output_file (str), id_column (str)
 def combat_normalize(file1_2, file3_4, output_file, id_column='TargetID'):
    # Read and combine files
    df1_2 = pd.read_excel(file1_2)
