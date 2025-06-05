@@ -3,10 +3,6 @@ import numpy as np
 from combat.pycombat import pycombat
 
 def combat_normalize(file1_2, file3_4, output_file, id_column='TargetID'):
-   """
-   ComBat normalization - either works or raises an error
-   """
-   
    # Read and combine files
    df1_2 = pd.read_excel(file1_2)
    df3_4 = pd.read_excel(file3_4)
@@ -19,28 +15,28 @@ def combat_normalize(file1_2, file3_4, output_file, id_column='TargetID'):
    beta_data = combined_raw.drop(columns=[id_column])
    
    print(f"Beta data shape before NaN removal: {beta_data.shape}")
-   print(f"NaN count: {beta_data.isna().sum().sum()}")
+   print(f"NaN count: {beta_data.isna().sum().sum()}") # there were a few NaN values that I think we should relook into in the future!
    
    # Remove rows with ANY NaN values
    mask_no_nan = beta_data.notna().all(axis=1)
    beta_data_clean = beta_data[mask_no_nan]
    target_ids_clean = target_ids[mask_no_nan]
    
-   print(f"Beta data shape after NaN removal: {beta_data_clean.shape}")
-   print(f"Removed {len(beta_data) - len(beta_data_clean)} TargetIDs due to NaN values")
+   print(f"Beta data shape after NaN removal: {beta_data_clean.shape}") # 1047 Cpgs removed due to NaN values (combat cannot handle NaNs)
+   print(f"Removed {len(beta_data) - len(beta_data_clean)} TargetIDs due to NaN values") # However, less than 0.5% (287465 total Cpgs) of the data was removed
    
    # Final NaN check
    if beta_data_clean.isna().sum().sum() > 0:
-       raise ValueError("Still have NaN values after cleanup - ComBat cannot proceed")
+       raise ValueError("Not all NaN values removed... please check")
    
    # Create batch vector
-   cols_1_2 = [col for col in df1_2.columns if col != id_column]
+   cols_1_2 = [col for col in df1_2.columns if col != id_column] #finds all column names with Run1_2 (this is batch 1), anything else is batch 2 (Run3_4)
    batch = []
    for col in beta_data_clean.columns:
        if col in cols_1_2:
-           batch.append(1)
+           batch.append(1) # Run1_2
        else:
-           batch.append(2)
+           batch.append(2) # Run3_4
    
    batch = np.array(batch)
    
@@ -54,7 +50,7 @@ def combat_normalize(file1_2, file3_4, output_file, id_column='TargetID'):
    
    print(f"Applying ComBat normalization...")
    
-   # Apply ComBat - pass DataFrame directly
+   # Apply ComBat
    corrected_data = pycombat(beta_data_clean, batch)
    
    print(f"ComBat successful! Type: {type(corrected_data)}, Shape: {corrected_data.shape}")
