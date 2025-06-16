@@ -14,7 +14,7 @@ library(sesame)
 sesameDataCache()
 
 # 4. Set paths
-idat_dir <- "idat"            
+idat_dir <- "idat"
 output_file <- "filtered_beta_matrix.csv"
 
 # 5. Load & preprocess samples

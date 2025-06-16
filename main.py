@@ -1,5 +1,6 @@
 from filter import remove_intensity_columns, combine_sample_files
-from preprocess import combat_normalize
+from preprocessing.combat_norm import combat_normalize
+from preprocessing.data_parsing import SampleReportParsing
 
 # This script processes two sets of sample files, removes intensity columns, combines them, and applies combat normalization.
 # It is the main entry point for the pipeline for data analysis. 
@@ -18,6 +19,23 @@ def main():
     final_df = combine_sample_files(df1, df2, final_output_path)
 
     return final_df
+
+def read_idat_files():
+    import subprocess
+
+    subprocess.run(['Rscript', 'idat.r'], check=True)
+
+def get_sample_table(input_file_paths, output_file_path):
+    """
+    This function reads multiple sample table files, combines them, and writes the combined data to a CSV file.
+    :param input_file_paths: Dictionary with file paths as keys and run numbers as values.
+    :param output_file_path: Path to save the combined CSV file.
+    """
+    parser = SampleReportParsing(input_file_paths)
+    parser.parse(output_file_path)
+    print(f"Sample table combined and saved to {output_file_path}")
+
+
     
 # This function applies combat normalization to the combined data from two sets of runs.
 # Note: the final prototype of the pipeline will take the DataFrame as an input instead of file paths.
@@ -30,5 +48,16 @@ def combat():
     
 
 if __name__ == "__main__":
-    df = main()
-    combat()
+    # df = main()
+    # combat()
+
+    input_file_paths = {
+        "./data/Mu EPIC Run 1 5-24-2021/SamplesTableFinalReport.txt": 1,
+        "./data/Mu EPIC Run 2 RQ-022275 FINAL_02042022/TableControl.txt": 2,
+        "./data/Mu EPIC Run 3 3-28-2022/SamplesTable.txt": 3,
+        "./data/Mu EPIC Run 4 10_2024/SamplesTable.txt": 4,
+    }
+    sample_table_output_path = './data/sample_table_combined.csv'
+
+    get_sample_table(input_file_paths, sample_table_output_path)
+    read_idat_files()

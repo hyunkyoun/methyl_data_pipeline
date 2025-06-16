@@ -9,3 +9,4 @@ __pycache__
 filtered_beta_matrix.csv
 idat
 
+.venv
