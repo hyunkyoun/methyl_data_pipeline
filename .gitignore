@@ -10,3 +10,5 @@ filtered_beta_matrix.csv
 idat
 
 .venv
+.RData
+.Rhistory

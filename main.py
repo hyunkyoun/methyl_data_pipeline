@@ -22,18 +22,56 @@ def main():
 
 def read_idat_files():
     import subprocess
+    import os
 
-    subprocess.run(['Rscript', 'idat.r'], check=True)
+    # Path to your custom R library
+    R_LIBS_PATH = "/Users/elliottseo/Documents/GitHub/methyl_data_pipeline/packages"
 
-def get_sample_table(input_file_paths, output_file_path):
+    # The R script you want to run
+    R_SCRIPT_PATH = "/Users/elliottseo/Documents/GitHub/methyl_data_pipeline/idat.r"
+
+    # List the required R packages
+    REQUIRED_PACKAGES = ["ggplot2", "dplyr", "tidyr", "sesame"]
+
+    # Build the R script
+    R_COMMAND = f"""
+    .libPaths("{R_LIBS_PATH}")
+
+    # List required packages
+    packages <- c({', '.join(f'"{pkg}"' for pkg in REQUIRED_PACKAGES)})
+
+    # Install any missing packages
+    new_packages <- packages[!(packages %in% installed.packages()[, "Package"])]
+    if (length(new_packages) > 0) {{
+        install.packages(new_packages, lib = "{R_LIBS_PATH}", repos = "https://cloud.r-project.org/")
+    }}
+
+    # Now run the actual script
+    source("{R_SCRIPT_PATH}")
     """
-    This function reads multiple sample table files, combines them, and writes the combined data to a CSV file.
-    :param input_file_paths: Dictionary with file paths as keys and run numbers as values.
-    :param output_file_path: Path to save the combined CSV file.
-    """
-    parser = SampleReportParsing(input_file_paths)
-    parser.parse(output_file_path)
-    print(f"Sample table combined and saved to {output_file_path}")
+
+    # Save the combined R command
+    temp_file = "temp_run.R"
+    with open(temp_file, "w") as f:
+        f.write(R_COMMAND)
+
+    # Run R script
+    subprocess.run(["Rscript", temp_file], check=True)
+
+    # Optional: remove temporary script
+    os.remove(temp_file)
+
+    print(f"✅ Done running {R_SCRIPT_PATH} with R libraries at {R_LIBS_PATH}")
+
+    def get_sample_table(input_file_paths, output_file_path):
+        """
+        This function reads multiple sample table files, combines them, and writes the combined data to a CSV file.
+        :param input_file_paths: Dictionary with file paths as keys and run numbers as values.
+        :param output_file_path: Path to save the combined CSV file.
+        """
+        parser = SampleReportParsing(input_file_paths)
+        parser.parse(output_file_path)
+        print(f"Sample table combined and saved to {output_file_path}")
 
 
     
@@ -51,13 +89,15 @@ if __name__ == "__main__":
     # df = main()
     # combat()
 
-    input_file_paths = {
-        "./data/Mu EPIC Run 1 5-24-2021/SamplesTableFinalReport.txt": 1,
-        "./data/Mu EPIC Run 2 RQ-022275 FINAL_02042022/TableControl.txt": 2,
-        "./data/Mu EPIC Run 3 3-28-2022/SamplesTable.txt": 3,
-        "./data/Mu EPIC Run 4 10_2024/SamplesTable.txt": 4,
-    }
-    sample_table_output_path = './data/sample_table_combined.csv'
+    # input_file_paths = {
+    #     "./data/Mu EPIC Run 1 5-24-2021/SamplesTableFinalReport.txt": 1,
+    #     "./data/Mu EPIC Run 2 RQ-022275 FINAL_02042022/TableControl.txt": 2,
+    #     "./data/Mu EPIC Run 3 3-28-2022/SamplesTable.txt": 3,
+    #     "./data/Mu EPIC Run 4 10_2024/SamplesTable.txt": 4,
+    # }
+    # sample_table_output_path = './data/sample_table_combined.csv'
 
-    get_sample_table(input_file_paths, sample_table_output_path)
+    # get_sample_table(input_file_paths, sample_table_output_path)
+    # read_idat_files()
+    
     read_idat_files()
