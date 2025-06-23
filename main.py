@@ -25,10 +25,10 @@ def main():
 
 def read_idat_files():
     # Path to your custom R library
-    R_LIBS_PATH = "/Users/elliottseo/Documents/GitHub/methyl_data_pipeline/packages"
+    R_LIBS_PATH = "./packages"
 
     # The R script you want to run
-    R_SCRIPT_PATH = "/Users/elliottseo/Documents/GitHub/methyl_data_pipeline/idat.r"
+    R_SCRIPT_PATH = "./idat.r"
 
     # List the required R packages
     REQUIRED_PACKAGES = ["ggplot2", "dplyr", "tidyr", "sesame"]
@@ -128,15 +128,15 @@ if __name__ == "__main__":
     # df = main()
     # combat()
 
-    # input_file_paths = {
-    #     "./data/Mu EPIC Run 1 5-24-2021/SamplesTableFinalReport.txt": 1,
-    #     "./data/Mu EPIC Run 2 RQ-022275 FINAL_02042022/TableControl.txt": 2,
-    #     "./data/Mu EPIC Run 3 3-28-2022/SamplesTable.txt": 3,
-    #     "./data/Mu EPIC Run 4 10_2024/SamplesTable.txt": 4,
-    # }
-    # sample_table_output_path = './data/sample_table_combined.csv'
+    input_file_paths = {
+        "./data/Mu EPIC Run 1 5-24-2021/SamplesTableFinalReport.txt": 1,
+        "./data/Mu EPIC Run 2 RQ-022275 FINAL_02042022/TableControl.txt": 2,
+        "./data/Mu EPIC Run 3 3-28-2022/SamplesTable.txt": 3,
+        "./data/Mu EPIC Run 4 10_2024/SamplesTable.txt": 4,
+    }
+    sample_table_output_path = './data/sample_table_combined.csv'
 
-    # get_sample_table(input_file_paths, sample_table_output_path)
-    # read_idat_files()
-    
+    get_sample_table(input_file_paths, sample_table_output_path)
     read_idat_files()
+
+    
