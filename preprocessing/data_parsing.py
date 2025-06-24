@@ -93,8 +93,6 @@ class SampleReportParsing:
             writer.writerows(all_data_rows)
 
         print(f"Combined data written to {output_file_path}")
-
-class AnalysisReadyDataset():
     
             
 
