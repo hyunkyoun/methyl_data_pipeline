@@ -3,7 +3,7 @@ from preprocessing.combat_norm import combat_normalize
 from preprocessing.data_parsing import SampleReportParsing
 import subprocess
 import os
-
+import pandas as pd
 
 # This script processes two sets of sample files, removes intensity columns, combines them, and applies combat normalization.
 # It is the main entry point for the pipeline for data analysis. 
@@ -122,21 +122,94 @@ def combat():
     output_file = './data/combat_normalized_output.xlsx'
 
     combat_normalize(file1_2, file3_4, output_file)
+
+def filter_and_split_idat_by_run(
+    sample_file,
+    idat_file,
+    output_dir='./data/split_runs'
+):
+    # Load sample sheet
+    sample_df = pd.read_csv(sample_file)
     
+    # Extract run numbers from Index and create mapping
+    sample_df['Run'] = sample_df['Index'].apply(lambda x: x.split('_')[0])
+    sample_df['IDAT_Column'] = sample_df['Sentrix Barcode'].astype(str) + "_" + sample_df['Sample Section']
+    
+    # Create dictionary for renaming: {old_column_name: Sample ID}
+    rename_dict = dict(zip(sample_df['IDAT_Column'], sample_df['Sample ID']))
+
+    # Map from run number to list of Sample IDs
+    run_to_sample_ids = sample_df.groupby('Run')['Sample ID'].apply(list).to_dict()
+    
+    # Load IDAT data
+    idat_df = pd.read_csv(idat_file)
+
+    # Rename columns using rename_dict
+    idat_df.columns = [rename_dict.get(col, col) for col in idat_df.columns]
+
+    # Rename first column to 'TargetID'
+    idat_df.rename(columns={idat_df.columns[0]: 'TargetID'}, inplace=True)
+
+    # Ensure output directory exists
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Split by run and save
+    for run, sample_ids in run_to_sample_ids.items():
+        subset_cols = ['TargetID'] + sample_ids
+        subset_df = idat_df[subset_cols]
+        output_file = os.path.join(output_dir, f"run_{run}.csv")
+        subset_df.to_csv(output_file, index=False)
+        print(f"Saved: {output_file}")
+
+
+def _extract_run_number(path):
+    import re
+    basename = os.path.basename(path)
+    match = re.match(r"run_(\d+)\.csv", basename)
+    if match:
+        return match.group(1)
+    else:
+        raise ValueError(f"Could not extract run number from filename: {path}")
+    
+def _combine_filename(file1, file2):
+    n1 = _extract_run_number(file1)
+    n2 = _extract_run_number(file2)
+
+    run_nums = sorted([n1, n2], key=int)
+    combined = f"run_{run_nums[0]}_{run_nums[1]}.csv"
+    return combined
+
+def combine_by_run(file1, file2, output_dir='./data/split_runs'):
+    output_file = os.path.join(output_dir, _combine_filename(file1, file2))
+
+    print(_combine_filename(file1, file2))
+    df1 = pd.read_csv(file1)
+    df2 = pd.read_csv(file2)
+
+    key_column = df1.columns[0]
+
+    combined_df = pd.merge(df1, df2, on=key_column, how='outer')
+    combined_df.to_csv(output_file, index=False)
+
+    print(f"Combined file saved as: {output_file}")
 
 if __name__ == "__main__":
     # df = main()
     # combat()
 
-    input_file_paths = {
-        "./data/Mu EPIC Run 1 5-24-2021/SamplesTableFinalReport.txt": 1,
-        "./data/Mu EPIC Run 2 RQ-022275 FINAL_02042022/TableControl.txt": 2,
-        "./data/Mu EPIC Run 3 3-28-2022/SamplesTable.txt": 3,
-        "./data/Mu EPIC Run 4 10_2024/SamplesTable.txt": 4,
-    }
-    sample_table_output_path = './data/sample_table_combined.csv'
+    # input_file_paths = {
+    #     "./data/Mu EPIC Run 1 5-24-2021/SamplesTableFinalReport.txt": 1,
+    #     "./data/Mu EPIC Run 2 RQ-022275 FINAL_02042022/TableControl.txt": 2,
+    #     "./data/Mu EPIC Run 3 3-28-2022/SamplesTable.txt": 3,
+    #     "./data/Mu EPIC Run 4 10_2024/SamplesTable.txt": 4,
+    # }
+    # sample_table_output_path = './data/sample_table_combined.csv'
 
-    get_sample_table(input_file_paths, sample_table_output_path)
-    read_idat_files()
+    # get_sample_table(input_file_paths, sample_table_output_path)
+        
 
-    
+    # # read_idat_files()
+    # filter_and_split_idat_by_run('./data/sample_table_combined.csv', './data/filtered_beta_matrix.csv')
+
+    combine_by_run('./data/split_runs/run_1.csv', './data/split_runs/run_2.csv')
+    combine_by_run('./data/split_runs/run_3.csv', './data/split_runs/run_4.csv')
