@@ -6,8 +6,15 @@ from combat.pycombat import pycombat
 # input: file1_2 (str), file3_4 (str), output_file (str), id_column (str)
 def combat_normalize(input_file, output_file, id_column='TargetID'):
     
-    combined_raw = pd.merge(input_file, on=id_column, how='outer')
+    # Read both files
+    df1_2 = pd.read_excel(file1_2)
+    df3_4 = pd.read_excel(file3_4)
     
+    print(f"Run 1_2 shape: {df1_2.shape}")
+    print(f"Run 3_4 shape: {df3_4.shape}")
+    
+    # Combine the files (keeping all TargetIDs)
+    combined_raw = pd.merge(df1_2, df3_4, on=id_column, how='outer')
     print(f"Combined raw shape: {combined_raw.shape}")
     
     # Prepare data
