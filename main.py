@@ -75,7 +75,7 @@ def get_sample_table(input_file_paths, output_file_path):
 
 def bmiq():
     # Path to your custom R library
-    R_LIBS_PATH = "/Users/elliottseo/Documents/GitHub/methyl_data_pipeline/packages"
+    R_LIBS_PATH = "./packages"
 
     # The R script you want to run
     R_SCRIPT_PATH = "/Users/elliottseo/Documents/GitHub/methyl_data_pipeline/bmiq/DoBMIQ.r"
@@ -195,22 +195,29 @@ if __name__ == "__main__":
     # df = main()
     # combat()
 
-    # input_file_paths = {
-    #     "./data/Mu EPIC Run 1 5-24-2021/SamplesTableFinalReport.txt": 1,
-    #     "./data/Mu EPIC Run 2 RQ-022275 FINAL_02042022/TableControl.txt": 2,
-    #     "./data/Mu EPIC Run 3 3-28-2022/SamplesTable.txt": 3,
-    #     "./data/Mu EPIC Run 4 10_2024/SamplesTable.txt": 4,
-    # }
-    # sample_table_output_path = './data/sample_table_combined.csv'
+    input_file_paths = {
+        "./data/Mu EPIC Run 1 5-24-2021/SamplesTableFinalReport.txt": 1,
+        "./data/Mu EPIC Run 2 RQ-022275 FINAL_02042022/TableControl.txt": 2,
+        "./data/Mu EPIC Run 3 3-28-2022/SamplesTable.txt": 3,
+        "./data/Mu EPIC Run 4 10_2024/SamplesTable.txt": 4,
+    }
+    sample_table_output_path = './data/sample_table_combined.csv'
 
-    # get_sample_table(input_file_paths, sample_table_output_path)
+    get_sample_table(input_file_paths, sample_table_output_path)
         
+    # read_idat_files()
+    filter_and_split_idat_by_run('./data/sample_table_combined.csv', './data/filtered_beta_matrix.csv')
 
-    # # # read_idat_files()
-    # filter_and_split_idat_by_run('./data/sample_table_combined.csv', './data/filtered_beta_matrix.csv')
-
-    # combine_by_run('./data/split_runs/run_1.csv', './data/split_runs/run_2.csv')
-    # combine_by_run('./data/split_runs/run_3.csv', './data/split_runs/run_4.csv')
+    combine_by_run('./data/split_runs/run_1.csv', './data/split_runs/run_2.csv')
+    combine_by_run('./data/split_runs/run_3.csv', './data/split_runs/run_4.csv')
 
 
     combat('./data/split_runs/run_1_2.csv', './data/split_runs/run_3_4.csv')
+
+
+    '''
+    Combined raw shape: (285143, 135)
+Beta data shape before NaN removal: (285143, 134)
+NaN count: 1255340
+Beta data shape after NaN removal: (21541, 134)
+Removed 263602 TargetIDs due to NaN values'''

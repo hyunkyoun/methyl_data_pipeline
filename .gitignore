@@ -12,3 +12,6 @@ idat
 .venv
 .RData
 .Rhistory
+
+packages
+new_idat

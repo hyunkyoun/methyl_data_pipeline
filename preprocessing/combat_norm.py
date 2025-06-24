@@ -40,6 +40,13 @@ def combat_normalize(file1_2, file3_4, output_file, id_column='TargetID'):
     # Get sample columns for each batch
     cols_1_2 = [col for col in df1_2.columns if col != id_column]
 
+
+    # print(cols_1_2)
+    # print("-=-" * 20)
+    # print(beta_data_clean.columns)
+
+    for col in beta_data_clean.columns:
+        print(col)
     # Create batch vector in the same order as beta_data_clean.columns
     batch = []
     for col in beta_data_clean.columns:
@@ -49,6 +56,8 @@ def combat_normalize(file1_2, file3_4, output_file, id_column='TargetID'):
             batch.append(2)
     
     batch = np.array(batch)
+
+    # print(batch)
     
     print(f"Batch distribution: {np.unique(batch, return_counts=True)}")
     print(f"Data shape: {beta_data_clean.shape}")
@@ -58,18 +67,18 @@ def combat_normalize(file1_2, file3_4, output_file, id_column='TargetID'):
     if len(batch) != beta_data_clean.shape[1]:
         raise ValueError(f"Batch length {len(batch)} does not match number of samples {beta_data_clean.shape[1]}")
     
-    print(f"Applying ComBat normalization...")
+    # print(f"Applying ComBat normalization...")
     
-    # Apply ComBat
-    corrected_data = pycombat(beta_data_clean, batch)
+    # # Apply ComBat
+    # corrected_data = pycombat(beta_data_clean, batch)
     
-    print(f"ComBat successful! Type: {type(corrected_data)}, Shape: {corrected_data.shape}")
+    # print(f"ComBat successful! Type: {type(corrected_data)}, Shape: {corrected_data.shape}")
     
-    # Add TargetID column back
-    corrected_data.insert(0, id_column, target_ids_clean.values)
+    # # Add TargetID column back
+    # corrected_data.insert(0, id_column, target_ids_clean.values)
     
-    # Save
-    corrected_data.to_excel(output_file, index=False)
-    print(f"Saved to: {output_file}")
+    # # Save
+    # corrected_data.to_excel(output_file, index=False)
+    # print(f"Saved to: {output_file}")
     
-    return corrected_data
+    # return corrected_data
