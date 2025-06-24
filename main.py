@@ -116,9 +116,7 @@ def bmiq():
     
 # This function applies combat normalization to the combined data from two sets of runs.
 # Note: the final prototype of the pipeline will take the DataFrame as an input instead of file paths.
-def combat():
-    file1_2 = './data/combined_run1_run2.xlsx'
-    file3_4 = './data/combined_run3_run4.xlsx'
+def combat(file1_2, file3_4):
     output_file = './data/combat_normalized_output.xlsx'
 
     combat_normalize(file1_2, file3_4, output_file)
@@ -208,8 +206,11 @@ if __name__ == "__main__":
     # get_sample_table(input_file_paths, sample_table_output_path)
         
 
-    # # read_idat_files()
+    # # # read_idat_files()
     # filter_and_split_idat_by_run('./data/sample_table_combined.csv', './data/filtered_beta_matrix.csv')
 
-    combine_by_run('./data/split_runs/run_1.csv', './data/split_runs/run_2.csv')
-    combine_by_run('./data/split_runs/run_3.csv', './data/split_runs/run_4.csv')
+    # combine_by_run('./data/split_runs/run_1.csv', './data/split_runs/run_2.csv')
+    # combine_by_run('./data/split_runs/run_3.csv', './data/split_runs/run_4.csv')
+
+
+    combat('./data/split_runs/run_1_2.csv', './data/split_runs/run_3_4.csv')

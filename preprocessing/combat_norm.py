@@ -7,8 +7,8 @@ from combat.pycombat import pycombat
 def combat_normalize(file1_2, file3_4, output_file, id_column='TargetID'):
     
     # Read both files
-    df1_2 = pd.read_excel(file1_2)
-    df3_4 = pd.read_excel(file3_4)
+    df1_2 = pd.read_csv(file1_2)
+    df3_4 = pd.read_csv(file3_4)
     
     print(f"Run 1_2 shape: {df1_2.shape}")
     print(f"Run 3_4 shape: {df3_4.shape}")
@@ -37,13 +37,16 @@ def combat_normalize(file1_2, file3_4, output_file, id_column='TargetID'):
         raise ValueError("Not all NaN values removed... please check")
     
     # Create batch vector
-    cols_1_2 = [col for col in input_file.columns if col != id_column] #finds all column names with Run1_2 (this is batch 1), anything else is batch 2 (Run3_4)
+    # Get sample columns for each batch
+    cols_1_2 = [col for col in df1_2.columns if col != id_column]
+
+    # Create batch vector in the same order as beta_data_clean.columns
     batch = []
     for col in beta_data_clean.columns:
         if col in cols_1_2:
-            batch.append(1) # Run1_2
+            batch.append(1)
         else:
-            batch.append(2) # Run3_4
+            batch.append(2)
     
     batch = np.array(batch)
     
