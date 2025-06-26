@@ -97,15 +97,15 @@ class SampleReportParsing:
             
 
 if __name__ == "__main__":
-    # input_file_path = "./data/Mu EPIC Run 1 5-24-2021/SampleMethFinalReport_nonorm.txt"
+    input_file_path = ".data/Mu EPIC Run 5 5_2025/FinalReport_ctrl-bkg.txt"
 
-    # parser = CSV_parsing(input_file_path)
-    # parser.parse("./data/parsed_output.csv")
-    input_file_path = {
-        "./data/Mu EPIC Run 1 5-24-2021/SamplesTableFinalReport.txt": 1,
-        "./data/Mu EPIC Run 2 RQ-022275 FINAL_02042022/TableControl.txt": 2,
-    }
+    parser = CSV_parsing(input_file_path)
+    parser.parse("./data/parsed_output.csv")
+    # input_file_path = {
+    #     "./data/Mu EPIC Run 1 5-24-2021/SamplesTableFinalReport.txt": 1,
+    #     "./data/Mu EPIC Run 2 RQ-022275 FINAL_02042022/TableControl.txt": 2,
+    # }
 
-    parser = SampleReportParsing(input_file_path)
-    parser.parse("./data/samplesTable.csv")
+    # parser = SampleReportParsing(input_file_path)
+    # parser.parse("./data/samplesTable.csv")
 

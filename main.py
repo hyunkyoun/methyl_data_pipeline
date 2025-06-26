@@ -1,6 +1,6 @@
 from filter import remove_intensity_columns, combine_sample_files
 from preprocessing.combat_norm import combat_normalize
-from preprocessing.data_parsing import SampleReportParsing
+from preprocessing.data_parsing import SampleReportParsing, CSV_parsing
 import subprocess
 import os
 import pandas as pd
@@ -192,27 +192,38 @@ def combine_by_run(file1, file2, output_dir='./data/split_runs'):
     print(f"Combined file saved as: {output_file}")
 
 if __name__ == "__main__":
+    # remove_intensity_columns("./data/parsed_output.csv", "./data/Mu Epic Run 5 FinalReport_ctrl-bkg AVGbeta.xlsx")
+    # df1 = pd.read_excel('./data/Mu EPIC Run 1 5-24-2021/Mu EPIC Run 1 FinalReport_ctrl-bkg Intensities_AVGbeta.xlsx')
+    # df2 = pd.read_excel('./data/Mu EPIC Run 2 RQ-022275 FINAL_02042022/Mu EPIC Run 2 FinalReport_ctrl_bkg Instensities_AVGbeta.xlsx')
+    # df3 = pd.read_excel('./data/Mu EPIC Run 3 3-28-2022/Mu EPIC Run 3 FinalReport-ctrl-bkg Intensities_AVGbeta.xlsx')
+    # df4 = pd.read_excel('./data/Mu EPIC Run 4 10_2024/Mu EPIC Run 4 FinalReport ctrl-bkg AVGbeta _ Intensities.xlsx')
+    # df5 = pd.read_excel('./data/Mu EPIC Run 5 5_2025/Mu Epic Run 5 FinalReport_ctrl-bkg AVGbeta.xlsx')
+
+
+    # combined_df = combine_sample_files([df1, df2], "Runs_1_2.xlsx")
+    # combined_df = combine_sample_files([df3, df4, df5], "Runs_3_4_5.xlsx")
+    
     # df = main()
     # combat()
 
-    input_file_paths = {
-        "./data/Mu EPIC Run 1 5-24-2021/SamplesTableFinalReport.txt": 1,
-        "./data/Mu EPIC Run 2 RQ-022275 FINAL_02042022/TableControl.txt": 2,
-        "./data/Mu EPIC Run 3 3-28-2022/SamplesTable.txt": 3,
-        "./data/Mu EPIC Run 4 10_2024/SamplesTable.txt": 4,
-    }
-    sample_table_output_path = './data/sample_table_combined.csv'
+    # input_file_paths = {
+    #     "./data/Mu EPIC Run 1 5-24-2021/SamplesTableFinalReport.txt": 1,
+    #     "./data/Mu EPIC Run 2 RQ-022275 FINAL_02042022/TableControl.txt": 2,
+    #     "./data/Mu EPIC Run 3 3-28-2022/SamplesTable.txt": 3,
+    #     "./data/Mu EPIC Run 4 10_2024/SamplesTable.txt": 4,
+    # }
+    # sample_table_output_path = './data/sample_table_combined.csv'
 
-    get_sample_table(input_file_paths, sample_table_output_path)
+    # get_sample_table(input_file_paths, sample_table_output_path)
         
-    # read_idat_files()
-    filter_and_split_idat_by_run('./data/sample_table_combined.csv', './data/filtered_beta_matrix.csv')
+    # # read_idat_files()
+    # filter_and_split_idat_by_run('./data/sample_table_combined.csv', './data/filtered_beta_matrix.csv')
 
-    combine_by_run('./data/split_runs/run_1.csv', './data/split_runs/run_2.csv')
-    combine_by_run('./data/split_runs/run_3.csv', './data/split_runs/run_4.csv')
+    # combine_by_run('./data/split_runs/run_1.csv', './data/split_runs/run_2.csv')
+    # combine_by_run('./data/split_runs/run_3.csv', './data/split_runs/run_4.csv')
 
 
-    combat('./data/split_runs/run_1_2.csv', './data/split_runs/run_3_4.csv')
+    combat('./Runs_1_2.xlsx', './Runs_3_4_5.xlsx')
 
 
     '''

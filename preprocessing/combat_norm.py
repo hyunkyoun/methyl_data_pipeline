@@ -7,8 +7,8 @@ from combat.pycombat import pycombat
 def combat_normalize(file1_2, file3_4, output_file, id_column='TargetID'):
     
     # Read both files
-    df1_2 = pd.read_csv(file1_2)
-    df3_4 = pd.read_csv(file3_4)
+    df1_2 = pd.read_excel(file1_2)
+    df3_4 = pd.read_excel(file3_4)
     
     print(f"Run 1_2 shape: {df1_2.shape}")
     print(f"Run 3_4 shape: {df3_4.shape}")
