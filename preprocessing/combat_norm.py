@@ -67,18 +67,18 @@ def combat_normalize(file1_2, file3_4, output_file, id_column='TargetID'):
     if len(batch) != beta_data_clean.shape[1]:
         raise ValueError(f"Batch length {len(batch)} does not match number of samples {beta_data_clean.shape[1]}")
     
-    # print(f"Applying ComBat normalization...")
+    print(f"Applying ComBat normalization...")
     
-    # # Apply ComBat
-    # corrected_data = pycombat(beta_data_clean, batch)
+    # Apply ComBat
+    corrected_data = pycombat(beta_data_clean, batch)
     
-    # print(f"ComBat successful! Type: {type(corrected_data)}, Shape: {corrected_data.shape}")
+    print(f"ComBat successful! Type: {type(corrected_data)}, Shape: {corrected_data.shape}")
     
-    # # Add TargetID column back
-    # corrected_data.insert(0, id_column, target_ids_clean.values)
+    # Add TargetID column back
+    corrected_data.insert(0, id_column, target_ids_clean.values)
     
-    # # Save
-    # corrected_data.to_excel(output_file, index=False)
-    # print(f"Saved to: {output_file}")
+    # Save
+    corrected_data.to_excel(output_file, index=False)
+    print(f"Saved to: {output_file}")
     
-    # return corrected_data
+    return corrected_data

@@ -80,8 +80,8 @@ def bmiq():
     # The R script you want to run
     R_SCRIPT_PATH = "/Users/elliottseo/Documents/GitHub/methyl_data_pipeline/bmiq/DoBMIQ.r"
 
-    # List the required R packages
-    REQUIRED_PACKAGES = ["ggplot2", "dplyr", "tidyr", "sesame"]
+    # List the required R packages (fixed to include actual dependencies)
+    REQUIRED_PACKAGES = ["readxl", "openxlsx", "ggplot2", "dplyr", "tidyr", "sesame", "RPMM"]
 
     # Build the R script
     R_COMMAND = f"""
@@ -96,8 +96,15 @@ def bmiq():
         install.packages(new_packages, lib = "{R_LIBS_PATH}", repos = "https://cloud.r-project.org/")
     }}
 
-    # Now run the actual script
+    # Load the required libraries
+    library(readxl)
+    library(openxlsx)
+
+    # Source the script to load the function
     source("{R_SCRIPT_PATH}")
+    
+    # Call the function with the correct paths
+    DoBMIQ("data/probesample.xlsx", "combat_normalized.xlsx")
     """
     
     # Save the combined R command
@@ -193,11 +200,15 @@ def combine_by_run(file1, file2, output_dir='./data/split_runs'):
 
 if __name__ == "__main__":
     # remove_intensity_columns("./data/parsed_output.csv", "./data/Mu Epic Run 5 FinalReport_ctrl-bkg AVGbeta.xlsx")
-    # df1 = pd.read_excel('./data/Mu EPIC Run 1 5-24-2021/Mu EPIC Run 1 FinalReport_ctrl-bkg Intensities_AVGbeta.xlsx')
-    # df2 = pd.read_excel('./data/Mu EPIC Run 2 RQ-022275 FINAL_02042022/Mu EPIC Run 2 FinalReport_ctrl_bkg Instensities_AVGbeta.xlsx')
-    # df3 = pd.read_excel('./data/Mu EPIC Run 3 3-28-2022/Mu EPIC Run 3 FinalReport-ctrl-bkg Intensities_AVGbeta.xlsx')
-    # df4 = pd.read_excel('./data/Mu EPIC Run 4 10_2024/Mu EPIC Run 4 FinalReport ctrl-bkg AVGbeta _ Intensities.xlsx')
-    # df5 = pd.read_excel('./data/Mu EPIC Run 5 5_2025/Mu Epic Run 5 FinalReport_ctrl-bkg AVGbeta.xlsx')
+    # remove_intensity_columns("./data/Mu EPIC Run 4 10_2024/Mu EPIC Run 4 FinalReport ctrl-bkg AVGbeta _ Intensities.xlsx", "./data/Mu Epic Run 4 FinalReport_ctrl-bkg AVGbeta.xlsx")
+    # remove_intensity_columns("./data/Mu EPIC Run 3 3-28-2022/Mu EPIC Run 3 FinalReport-ctrl-bkg Intensities_AVGbeta.xlsx", "./data/Mu Epic Run 3 FinalReport_ctrl-bkg AVGbeta.xlsx")
+    # remove_intensity_columns("./data/Mu EPIC Run 2 RQ-022275 FINAL_02042022/Mu EPIC Run 2 FinalReport_ctrl_bkg Instensities_AVGbeta.xlsx", "./data/Mu Epic Run 2 FinalReport_ctrl-bkg AVGbeta.xlsx")
+    # remove_intensity_columns("./data/Mu EPIC Run 1 5-24-2021/Mu EPIC Run 1 FinalReport_ctrl-bkg Intensities_AVGbeta.xlsx", "./data/Mu Epic Run 1 FinalReport_ctrl-bkg AVGbeta.xlsx")
+    # df1 = pd.read_excel('./data/Mu Epic Run 1 FinalReport_ctrl-bkg AVGbeta.xlsx')
+    # df2 = pd.read_excel('./data/Mu Epic Run 2 FinalReport_ctrl-bkg AVGbeta.xlsx')
+    # df3 = pd.read_excel('./data/Mu Epic Run 3 FinalReport_ctrl-bkg AVGbeta.xlsx')
+    # df4 = pd.read_excel('./data/Mu Epic Run 4 FinalReport_ctrl-bkg AVGbeta.xlsx')
+    # df5 = pd.read_excel('./data/Mu Epic Run 5 FinalReport_ctrl-bkg AVGbeta.xlsx')
 
 
     # combined_df = combine_sample_files([df1, df2], "Runs_1_2.xlsx")
@@ -223,8 +234,8 @@ if __name__ == "__main__":
     # combine_by_run('./data/split_runs/run_3.csv', './data/split_runs/run_4.csv')
 
 
-    combat('./Runs_1_2.xlsx', './Runs_3_4_5.xlsx')
-
+    # combat_normalize('./Runs_1_2.xlsx', './Runs_3_4_5.xlsx', 'combat_normalized.xlsx')
+    bmiq()
 
     '''
     Combined raw shape: (285143, 135)
