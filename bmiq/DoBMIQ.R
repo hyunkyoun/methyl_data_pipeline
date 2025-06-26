@@ -1,6 +1,9 @@
 library(readxl)
 library(openxlsx)
 
+probes_path <- "."
+beta_path <- "."
+
 DoBMIQ <- function(probes_path, beta_path) {
 
 probes <- read_excel(probes_path)
