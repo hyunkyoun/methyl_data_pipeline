@@ -4,6 +4,7 @@
 *.RData
 *.Rd
 *.pdf
+*.csv
 
 data
 __pycache__
