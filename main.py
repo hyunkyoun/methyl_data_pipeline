@@ -227,7 +227,7 @@ if __name__ == "__main__":
 
     # get_sample_table(input_file_paths, sample_table_output_path)
         
-    # # read_idat_files()
+    read_idat_files()
     # filter_and_split_idat_by_run('./data/sample_table_combined.csv', './data/filtered_beta_matrix.csv')
 
     # combine_by_run('./data/split_runs/run_1.csv', './data/split_runs/run_2.csv')
@@ -235,7 +235,6 @@ if __name__ == "__main__":
 
 
     # combat_normalize('./Runs_1_2.xlsx', './Runs_3_4_5.xlsx', 'combat_normalized.xlsx')
-    bmiq()
 
     '''
     Combined raw shape: (285143, 135)

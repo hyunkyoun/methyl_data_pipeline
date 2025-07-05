@@ -108,25 +108,20 @@ def collect_idat_files(source_directory, destination_directory):
 
 
 # Example usage
-# idat_file_paths = find_all_idat_files('./data/Mu EPIC Zip files incl image files')
-# for path in idat_file_paths:
-#     print(path)
+idat_file_paths = find_all_idat_files('./data/Mu EPIC Zip files incl image files')
+for path in idat_file_paths:
+    print(path)
 
-# print(len(idat_file_paths))
-
-# curr_idat_count = count_idat_files('./idat')
-# print(curr_idat_count)
-
-# collect_idat_files('./data/Mu EPIC Zip files incl image files', './new_idat')
-# new_idat_count = count_idat_files('./new_idat')
-# print(new_idat_count)
+collect_idat_files('./data/Down_Syndrome_Mouse_Microarray_Samples', './idat')
+new_idat_count = count_idat_files('./idat')
+print(new_idat_count)
 
 
-file_path1 = './data/filtered_beta_matrix.csv'
-empty, total = count_empty_and_total_cells(file_path1)
-print(f"Empty cells: {empty}")
-print(f"Total cells: {total}")
-print(f"Percentage empty: {100 * empty / total:.2f}%")
+# file_path1 = './data/filtered_beta_matrix.csv'
+# empty, total = count_empty_and_total_cells(file_path1)
+# print(f"Empty cells: {empty}")
+# print(f"Total cells: {total}")
+# print(f"Percentage empty: {100 * empty / total:.2f}%")
 
 # file_path2 = './data/split_runs/run_3_4.csv'
 # empty, total = count_empty_and_total_cells(file_path2)
