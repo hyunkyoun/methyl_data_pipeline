@@ -5,6 +5,7 @@
 *.Rd
 *.pdf
 *.csv
+*.zip
 
 data
 __pycache__
