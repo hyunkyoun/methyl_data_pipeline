@@ -5,26 +5,23 @@ DoBMIQ <- function(probes_path, beta_path) {
 
 probes <- read_excel(probes_path)
 print(paste("probes_path:", probes_path))
-beta_data <- read_excel(beta_path)
+beta_data <- read.csv(beta_path)
 print(paste("beta_path:", beta_path))
 
-# Creating data matrix - FILTER FOR AVG_BETA COLUMNS ONLY
-probe_ids <- sub("_.*", "", beta_data$`TargetID`)
+# Creating data matrix - USE ALL COLUMNS EXCEPT THE FIRST ONE (probe IDs)
+# Extract probe IDs from the first column (no underscore removal needed)
+probe_ids <- beta_data[, 1]  # First column contains probe IDs like "cg00101675"
 
-# Filter columns to only include those with "AVG_Beta" but not "AVG_Beta_y" or "FAILED"
+# Use all columns except the first one (probe ID column)
 all_sample_id <- colnames(beta_data)[-1]
-avg_beta_cols <- grepl("AVG_Beta", all_sample_id) & 
-                 !grepl("AVG_Beta_y", all_sample_id) & 
-                 !grepl("AVG_Beta_x", all_sample_id) & 
-                 !grepl("FAILED", all_sample_id)
-selected_cols <- which(avg_beta_cols) + 1  # +1 because we excluded first column
+selected_cols <- 2:ncol(beta_data)  # All columns except the first
 
 data.m <- as.matrix(beta_data[, selected_cols])
 sample_id <- colnames(beta_data)[selected_cols]
 rownames(data.m) <- probe_ids
 
 cat("Original columns:", length(all_sample_id), "\n")
-cat("Selected AVG_BETA columns:", length(sample_id), "\n")
+cat("Selected columns (all except TargetID):", length(sample_id), "\n")
 cat("Selected column names:", paste(sample_id, collapse=", "), "\n")
 
 # Remove rows with any NA values
@@ -157,30 +154,33 @@ for(s in 1:ncol(bmiq.m)){
   print(s);
 }
 
-avg_cols <- grep("AVG", sample_id, value = TRUE)
-if (length(avg_cols) == 2) {
-  cat("📊 Generating final Type2-BMIQ plot for:", avg_cols[1], "and", avg_cols[2], "\n")
+# Generate comparison plot using first two samples
+if (ncol(bmiq.m) >= 2) {
+  cat("📊 Generating final Type2-BMIQ plot for:", sample_id[1], "and", sample_id[2], "\n")
 
-  idx1 <- which(sample_id == avg_cols[1])  # KO AVG
-  idx2 <- which(sample_id == avg_cols[2])  # Control AVG
-
-  # Type2 BMIQ-normalized only
-  type2_ko_bmiq <- bmiq.m[design.v == 2, idx1]
-  type2_ctrl_bmiq <- bmiq.m[design.v == 2, idx2]
+  # Type2 BMIQ-normalized only - comparing first two samples
+  type2_sample1_bmiq <- bmiq.m[design.v == 2, 1]
+  type2_sample2_bmiq <- bmiq.m[design.v == 2, 2]
 
   # Densities
-  d_type2_ko <- density(type2_ko_bmiq)
-  d_type2_ctrl <- density(type2_ctrl_bmiq)
+  d_type2_sample1 <- density(type2_sample1_bmiq)
+  d_type2_sample2 <- density(type2_sample2_bmiq)
 
-  ymax <- max(d_type2_ko$y, d_type2_ctrl$y)
+  ymax <- max(d_type2_sample1$y, d_type2_sample2$y)
 
-  pdf("Compare_KO_Control_AVG_Type2Only.pdf", width=6, height=4)
-  plot(d_type2_ko, type="l", col="red", lwd=2, xlim=c(0, 1), ylim=c(0, ymax),
-      xlab="Beta Value", ylab="Density", main="KO vs Control AVG: BMIQ")
+  pdf("Compare_First_Two_Samples_Type2Only.pdf", width=6, height=4)
+  plot(d_type2_sample1, type="l", col="red", lwd=2, xlim=c(0, 1), ylim=c(0, ymax),
+      xlab="Beta Value", ylab="Density", main="Sample Comparison: BMIQ (Type 2 Probes)")
 
-  lines(d_type2_ctrl, col="green3", lwd=2)
+  lines(d_type2_sample2, col="green3", lwd=2)
+  
+  # Add legend
+  legend("topright", legend=c(sample_id[1], sample_id[2]), 
+         col=c("red", "green3"), lwd=2, cex=0.8)
 
   dev.off()
+} else {
+  cat("📊 Less than 2 samples available - skipping comparison plot\n")
 }
 
 save(bmiq.m,file="bmiq.Rd");

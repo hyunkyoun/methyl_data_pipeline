@@ -78,7 +78,7 @@ def bmiq():
     R_LIBS_PATH = "./packages"
 
     # The R script you want to run
-    R_SCRIPT_PATH = "/Users/elliottseo/Documents/GitHub/methyl_data_pipeline/bmiq/DoBMIQ.r"
+    R_SCRIPT_PATH = "./bmiq/DoBMIQ.r"
 
     # List the required R packages (fixed to include actual dependencies)
     REQUIRED_PACKAGES = ["readxl", "openxlsx", "ggplot2", "dplyr", "tidyr", "sesame", "RPMM"]
@@ -104,7 +104,7 @@ def bmiq():
     source("{R_SCRIPT_PATH}")
     
     # Call the function with the correct paths
-    DoBMIQ("data/probesample.xlsx", "combat_normalized.xlsx")
+    DoBMIQ("data/probesample.xlsx", "data/betas_combat_normalized.csv")
     """
     
     # Save the combined R command
@@ -227,7 +227,7 @@ if __name__ == "__main__":
 
     # get_sample_table(input_file_paths, sample_table_output_path)
         
-    read_idat_files()
+    # read_idat_files()
     # filter_and_split_idat_by_run('./data/sample_table_combined.csv', './data/filtered_beta_matrix.csv')
 
     # combine_by_run('./data/split_runs/run_1.csv', './data/split_runs/run_2.csv')
@@ -242,3 +242,5 @@ Beta data shape before NaN removal: (285143, 134)
 NaN count: 1255340
 Beta data shape after NaN removal: (21541, 134)
 Removed 263602 TargetIDs due to NaN values'''
+
+    bmiq()
