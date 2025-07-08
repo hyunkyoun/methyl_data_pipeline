@@ -7,6 +7,7 @@
 *.csv
 *.zip
 
+plots
 data
 __pycache__
 .DS_Store
