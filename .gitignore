@@ -8,6 +8,8 @@
 *.zip
 
 plots
+plots_25k
+plots_10k
 data
 __pycache__
 .DS_Store

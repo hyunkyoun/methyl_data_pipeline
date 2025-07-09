@@ -3,6 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.stats import ttest_ind, mannwhitneyu
 import os
+from matplotlib.lines import Line2D
 
 # === USER INPUT ===
 print("Separate multiple file paths with commas")
@@ -64,27 +65,46 @@ neg_log_p = -np.log10(p_values)
 # === BUILD RESULTS DF ===
 results_df = pd.DataFrame({
     'Delta_Beta': delta_beta,
+    'Delta_Beta_x10': delta_beta * 10,
     '-log10(p-value)': neg_log_p,
     'p-value': p_values
 })
 
 # === STATS SUMMARY ===
-sig = (abs(results_df["Delta_Beta"]) > 0.125) & (results_df["p-value"] < 0.05)
+threshold_db = 0.5
+threshold_p = 0.05
+sig_mask = (abs(results_df["Delta_Beta_x10"]) > threshold_db) & (results_df["p-value"] < threshold_p)
 print("\nΔβ range:", delta_beta.min(), "to", delta_beta.max())
-print("Significant CpGs (Δβ > 0.2 & p < 0.05):", sig.sum())
+print("Significant CpGs (|Δβ×10| > 0.5 & p < 0.05):", sig_mask.sum())
+
+# === ASSIGN COLORS ===
+colors = np.where(
+    sig_mask & (results_df["Delta_Beta_x10"] > threshold_db), 'red',
+    np.where(sig_mask & (results_df["Delta_Beta_x10"] < -threshold_db), 'blue', 'gray')
+)
 
 # === PLOT ===
-plt.figure(figsize=(10, 6))
-plt.scatter(results_df["Delta_Beta"], results_df["-log10(p-value)"], s=10, alpha=0.7, c='gray')
-plt.scatter(results_df[sig]["Delta_Beta"], results_df[sig]["-log10(p-value)"], s=10, c='red')
+plt.figure(figsize=(8, 8))  # Square plot
+plt.scatter(results_df["Delta_Beta_x10"], results_df["-log10(p-value)"], s=10, alpha=0.7, c=colors)
 
-plt.axvline(0.2, color='blue', linestyle='--', linewidth=1)
-plt.axvline(-0.2, color='blue', linestyle='--', linewidth=1)
-plt.axhline(-np.log10(0.05), color='green', linestyle='--', linewidth=1)
+# Threshold lines
+plt.axvline(threshold_db, color='red', linestyle='--', linewidth=1)
+plt.axvline(-threshold_db, color='red', linestyle='--', linewidth=1)
+plt.axhline(-np.log10(threshold_p), color='green', linestyle='--', linewidth=1)
 
-plt.xlabel("Fract. Methyl. Difference (Δβ)")
+# Labels
+plt.xlabel("Fract. Methyl. Difference × 10 (Δβ × 10)")
 plt.ylabel("-log10(p-value)")
-plt.title("Volcano Plot of Differential Methylation")
+plt.title("Volcano Plot of Differential Methylation (Scaled X-axis)")
+
+# Optional legend
+legend_elements = [
+    Line2D([0], [0], marker='o', color='w', label='Group 1 > Group 2', markerfacecolor='blue', markersize=6),
+    Line2D([0], [0], marker='o', color='w', label='Group 2 > Group 1', markerfacecolor='red', markersize=6),
+    Line2D([0], [0], marker='o', color='w', label='Not significant', markerfacecolor='gray', markersize=6)
+]
+plt.legend(handles=legend_elements, loc='upper right')
+
 plt.tight_layout()
 
 # === SAVE OR SHOW ===

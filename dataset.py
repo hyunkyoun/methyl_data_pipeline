@@ -3,11 +3,11 @@ import os
 import re
 
 # === USER INPUT FILES ===
-beta_file = "/Users/elliottseo/Documents/GitHub/methyl_data_pipeline/completed_bmiq_data.xlsx"     # Replace with actual filename
-sample_sheet_file = "/Users/elliottseo/Documents/GitHub/methyl_data_pipeline/master_samplesheet.csv" # Replace with actual filename
+beta_file = "/Users/elliottseo/Documents/GitHub/methyl_data_pipeline/beta_25k.csv"     # Replace with actual filename
+sample_sheet_file = "/Users/elliottseo/Documents/GitHub/methyl_data_pipeline/data/master_samplesheet.csv" # Replace with actual filename
 
 # === Load data ===
-beta_df = pd.read_excel(beta_file)
+beta_df = pd.read_csv(beta_file)
 sample_sheet = pd.read_csv(sample_sheet_file)
 
 # === Normalize sample IDs ===
@@ -49,7 +49,7 @@ for _, row in sample_sheet.iterrows():
     experiment_group_data[exp][group].append(sample)
 
 # === Save each group to plots/ folder ===
-base_dir = "plots"
+base_dir = "plots_25k"
 os.makedirs(base_dir, exist_ok=True)
 
 for exp, groups in experiment_group_data.items():

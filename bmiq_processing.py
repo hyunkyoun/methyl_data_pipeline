@@ -27,7 +27,7 @@ def process_bmiq_data(bmiq_data_path, sample_sheet_path):
     print("Column headers updated successfully.")
 
 if __name__ == "__main__":
-    bmiq_data_path = "./data/bmiq_processed_values.xlsx"
+    bmiq_data_path = "/Users/elliottseo/Documents/GitHub/methyl_data_pipeline/bmiq.xlsx"
     sample_sheet_path = "./data/master_samplesheet.csv"
 
     process_bmiq_data(bmiq_data_path, sample_sheet_path)
