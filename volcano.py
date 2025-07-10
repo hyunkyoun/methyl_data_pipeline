@@ -65,27 +65,27 @@ neg_log_p = -np.log10(p_values)
 # === BUILD RESULTS DF ===
 results_df = pd.DataFrame({
     'Delta_Beta': delta_beta,
-    'Delta_Beta_x10': delta_beta * 10,
+    'Delta_Beta_x100': delta_beta * 100,
     '-log10(p-value)': neg_log_p,
     'p-value': p_values
 })
 
 # === STATS SUMMARY ===
-threshold_db = 0.5
+threshold_db = 5
 threshold_p = 0.05
-sig_mask = (abs(results_df["Delta_Beta_x10"]) > threshold_db) & (results_df["p-value"] < threshold_p)
+sig_mask = (abs(results_df["Delta_Beta_x100"]) > threshold_db) & (results_df["p-value"] < threshold_p)
 print("\nΔβ range:", delta_beta.min(), "to", delta_beta.max())
 print("Significant CpGs (|Δβ×10| > 0.5 & p < 0.05):", sig_mask.sum())
 
 # === ASSIGN COLORS ===
 colors = np.where(
-    sig_mask & (results_df["Delta_Beta_x10"] > threshold_db), 'red',
-    np.where(sig_mask & (results_df["Delta_Beta_x10"] < -threshold_db), 'blue', 'gray')
+    sig_mask & (results_df["Delta_Beta_x100"] > threshold_db), 'red',
+    np.where(sig_mask & (results_df["Delta_Beta_x100"] < -threshold_db), 'blue', 'gray')
 )
 
 # === PLOT ===
 plt.figure(figsize=(8, 8))  # Square plot
-plt.scatter(results_df["Delta_Beta_x10"], results_df["-log10(p-value)"], s=10, alpha=0.7, c=colors)
+plt.scatter(results_df["Delta_Beta_x100"], results_df["-log10(p-value)"], s=10, alpha=0.7, c=colors)
 
 # Threshold lines
 plt.axvline(threshold_db, color='red', linestyle='--', linewidth=1)
@@ -93,7 +93,7 @@ plt.axvline(-threshold_db, color='red', linestyle='--', linewidth=1)
 plt.axhline(-np.log10(threshold_p), color='green', linestyle='--', linewidth=1)
 
 # Labels
-plt.xlabel("Fract. Methyl. Difference × 10 (Δβ × 10)")
+plt.xlabel("Fract. Methyl. Difference × 100 (Δβ × 100)")
 plt.ylabel("-log10(p-value)")
 plt.title("Volcano Plot of Differential Methylation (Scaled X-axis)")
 
