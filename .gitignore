@@ -6,6 +6,7 @@
 *.pdf
 *.csv
 *.zip
+*.png
 
 plots
 plots_25k

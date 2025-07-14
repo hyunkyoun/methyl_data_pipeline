@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.stats import ttest_ind, mannwhitneyu
+from statsmodels.stats.multitest import multipletests
 import os
 from matplotlib.lines import Line2D
 
@@ -47,9 +48,8 @@ mean2 = group2.mean(axis=1)
 delta_beta = mean1 - mean2
 
 # === CALCULATE P-VALUES ===
-p_values = pd.Series(index=group1.index, dtype='float64')
-
 if use_mannwhitney:
+    p_values = pd.Series(index=group1.index, dtype='float64')
     for cpg in group1.index:
         try:
             _, p = mannwhitneyu(group1.loc[cpg], group2.loc[cpg], alternative='two-sided')
@@ -60,6 +60,9 @@ else:
     ttest = ttest_ind(group1.T, group2.T, axis=0, equal_var=False, nan_policy='omit')
     p_values = pd.Series(ttest.pvalue, index=group1.index)
 
+# === FDR CORRECTION ===
+_, fdrs, _, _ = multipletests(p_values, method='fdr_bh')
+fdr_series = pd.Series(fdrs, index=p_values.index)
 neg_log_p = -np.log10(p_values)
 
 # === BUILD RESULTS DF ===
@@ -67,15 +70,17 @@ results_df = pd.DataFrame({
     'Delta_Beta': delta_beta,
     'Delta_Beta_x100': delta_beta * 100,
     '-log10(p-value)': neg_log_p,
-    'p-value': p_values
+    'p-value': p_values,
+    'FDR': fdr_series
 })
 
 # === STATS SUMMARY ===
-threshold_db = 5
-threshold_p = 0.05
-sig_mask = (abs(results_df["Delta_Beta_x100"]) > threshold_db) & (results_df["p-value"] < threshold_p)
+threshold_db = 0.5
+threshold_fdr = 0.05
+sig_mask = (abs(results_df["Delta_Beta_x100"]) > threshold_db) & (results_df["FDR"] < threshold_fdr)
+
 print("\nΔβ range:", delta_beta.min(), "to", delta_beta.max())
-print("Significant CpGs (|Δβ×10| > 0.5 & p < 0.05):", sig_mask.sum())
+print("Significant CpGs (|Δβ×100| > 5 & FDR < 0.05):", sig_mask.sum())
 
 # === ASSIGN COLORS ===
 colors = np.where(
@@ -84,18 +89,18 @@ colors = np.where(
 )
 
 # === PLOT ===
-plt.figure(figsize=(8, 8))  # Square plot
+plt.figure(figsize=(8, 8))
 plt.scatter(results_df["Delta_Beta_x100"], results_df["-log10(p-value)"], s=10, alpha=0.7, c=colors)
 
 # Threshold lines
 plt.axvline(threshold_db, color='red', linestyle='--', linewidth=1)
 plt.axvline(-threshold_db, color='red', linestyle='--', linewidth=1)
-plt.axhline(-np.log10(threshold_p), color='green', linestyle='--', linewidth=1)
+plt.axhline(-np.log10(threshold_fdr), color='green', linestyle='--', linewidth=1)
 
 # Labels
 plt.xlabel("Fract. Methyl. Difference × 100 (Δβ × 100)")
 plt.ylabel("-log10(p-value)")
-plt.title("Volcano Plot of Differential Methylation (Scaled X-axis)")
+plt.title("Volcano Plot of Differential Methylation (FDR-adjusted)")
 
 # Optional legend
 legend_elements = [

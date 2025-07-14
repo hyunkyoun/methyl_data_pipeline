@@ -1,307 +1,489 @@
-.libPaths("/Users/elliottseo/Documents/GitHub/methyl_data_pipeline/packages")
-setwd("/Users/elliottseo/Documents/GitHub/methyl_data_pipeline")
+# # Methylation Data Analysis Pipeline
+# # IDAT -> QC -> BMIQ (per run) -> ComBat-MET (across all runs) -> PCA
 
-library(sesame)
-library(minfi)
-library(IlluminaMouseMethylationmanifest)
-library(IlluminaMouseMethylationanno.12.v1.mm10)
-library(limma)
-library(sva)
-library(ggsci)
-library(wateRmelon)
-library(snow)
-library(BiocParallel)
-library(parallel)
-library(RColorBrewer)
-library(readxl)
-library(openxlsx)
+# # ==============================================================================
+# # SETUP AND INITIALIZATION
+# # ==============================================================================
 
-cat("Library Paths:\n")
-cat(.libPaths(), sep = "\n")
+# # Set library paths and working directory
+# .libPaths("/Users/elliottseo/Documents/GitHub/methyl_data_pipeline/packages")
+# setwd("/Users/elliottseo/Documents/GitHub/methyl_data_pipeline")
 
-# Source the DoBMIQ function
-source("/Users/elliottseo/Documents/GitHub/methyl_data_pipeline/bmiq/DoBMIQ.R")
+# # Load required libraries
+# print("Loading libraries...")
+# required_libs <- c("sesame", "minfi", "IlluminaMouseMethylationmanifest", 
+#                    "IlluminaMouseMethylationanno.12.v1.mm10", "limma", "sva", 
+#                    "ggsci", "wateRmelon", "snow", "BiocParallel", "parallel", 
+#                    "RColorBrewer", "readxl", "openxlsx", "ggplot2")
 
-# Annotation
-annoMouse <- getAnnotation(IlluminaMouseMethylationanno.12.v1.mm10)
+# lapply(required_libs, library, character.only = TRUE)
 
-# Read raw data
-print("Reading in IDATs...")
-idir <- "idat"
-cores <- 4
-betas <- openSesame(idir, BPPARAM = BiocParallel::MulticoreParam(workers=cores), collapseToPfx=TRUE)
-detP <- openSesame(idir, func = pOOBAH, return.pval=TRUE, BPPARAM = BiocParallel::MulticoreParam(workers=cores))
-detP <- betasCollapseToPfx(detP)
+# # Install and load ComBat-MET if not available
+# if (!requireNamespace("ComBatMet", quietly = TRUE)) {
+#   if (!requireNamespace("devtools", quietly = TRUE)) install.packages("devtools")
+#   devtools::install_github("JmWangBio/ComBatMet")
+# }
+# library(ComBatMet)
 
-# write.csv(betas, "combined_betas.csv", row.names = TRUE)
-# write.csv(detP, "combined_detP.csv", row.names = TRUE)
+# # Source BMIQ function
+# print("Sourcing DoBMIQ function...")
+# source("bmiq/DoBMIQ.R")
 
-# Read metadata
-targets <- read.csv("/Users/elliottseo/Documents/GitHub/methyl_data_pipeline/data/master_samplesheet.csv", header=TRUE)
-targets$Basename <- paste0(targets$BEADCHIP, "_", targets$POSITION)
-targets$Samples <- paste0(targets$tb, "_", targets$RUN)
-write.csv(targets, "targets_pre.csv", row.names = FALSE)
+# # Load annotation data
+# print("Loading annotation data...")
+# annoMouse <- getAnnotation(IlluminaMouseMethylationanno.12.v1.mm10)
 
-# Align
-targets$BEADCHIP <- as.character(as.numeric(targets$BEADCHIP))
-targets <- targets[!duplicated(paste0(targets$BEADCHIP, "_", targets$POSITION)), ]
-targets$Basename <- paste0(targets$BEADCHIP, "_", targets$POSITION)
-common_samples <- intersect(targets$Basename, colnames(betas))
-targets <- targets[targets$Basename %in% common_samples, ]
-betas <- betas[, match(targets$Basename, colnames(betas))]
-detP <- detP[, match(targets$Basename, colnames(detP))]
+# # ==============================================================================
+# # STEP 1: READ IDAT FILES AND GENERATE DETECTION P-VALUES
+# # ==============================================================================
 
-# write.csv(betas, "betas.csv")
-# write.csv(detP, "detP.csv")
-# write.csv(targets, "targets.csv")
+# print("=== STEP 1: Reading IDAT files ===")
+# idir <- "idat"
+# cores <- 4
 
-# QC Plots
-pal <- pal_simpsons()(12)
-pdf("meanDP.pdf")
-barplot(colMeans(detP), col=pal[factor(targets$Samples)], las=2, cex.names=0.4, ylab="Mean detection p-values")
-abline(h=0.05, col="red")
-legend("topleft", legend=levels(factor(targets$Samples)), fill=pal, bg="white")
-dev.off()
+# # Read raw data and calculate detection p-values
+# betas <- openSesame(idir, BPPARAM = MulticoreParam(workers = cores), collapseToPfx = TRUE)
+# detP <- openSesame(idir, func = pOOBAH, return.pval = TRUE, BPPARAM = MulticoreParam(workers = cores))
+# detP <- betasCollapseToPfx(detP)
 
-pdf("density.pdf")
-densityPlot(betas, sampGroups=targets$Samples, main="Beta Density", legend=FALSE, pal=pal)
-legend("top", legend=levels(factor(targets$Samples)), text.col=pal)
-dev.off()
+# # Load and prepare sample metadata
+# targets <- read.csv("data/master_samplesheet.csv", header = TRUE)
+# targets$Basename <- paste0(targets$BEADCHIP, "_", targets$POSITION)
+# targets$Samples <- paste0(targets$tb, "_", targets$RUN)
+# targets$BEADCHIP <- as.character(as.numeric(targets$BEADCHIP))
+# targets <- targets[!duplicated(targets$Basename), ]
 
-# Filter by RUN
-print("=== FILTERING BY RUN ===")
-unique_runs <- sort(unique(targets$RUN))
-betas_by_run <- list()
-detP_by_run <- list()
-targets_by_run <- list()
+# # Align metadata with beta matrix
+# common_samples <- intersect(targets$Basename, colnames(betas))
+# targets <- targets[targets$Basename %in% common_samples, ]
+# betas <- betas[, match(targets$Basename, colnames(betas))]
+# detP <- detP[, match(targets$Basename, colnames(detP))]
 
-for(run_id in unique_runs) {
-  idx <- targets$RUN == run_id
-  targets_run <- targets[idx, ]
-  betas_run <- betas[, idx]
-  detP_run <- detP[, idx]
+# # Verify sample matching
+# if (!identical(targets$Basename, colnames(betas))) {
+#   stop("Sample matching failed!")
+# }
+
+# # Generate initial QC plots
+# print("Generating initial QC plots...")
+# pal <- pal_simpsons()(12)
+# pdf("meanDP_initial.pdf")
+# barplot(colMeans(detP), col = pal[factor(targets$Samples)], las = 2, 
+#         cex.names = 0.4, ylab = "Mean detection p-values")
+# abline(h = 0.05, col = "red")
+# legend("topleft", legend = levels(factor(targets$Samples)), fill = pal, bg = "white")
+# dev.off()
+
+# pdf("density_initial.pdf")
+# densityPlot(betas, sampGroups = targets$Samples, main = "Beta Density (Initial)", 
+#             legend = FALSE, pal = pal)
+# legend("top", legend = levels(factor(targets$Samples)), text.col = pal)
+# dev.off()
+
+# # ==============================================================================
+# # STEP 2: QC FILTERING BY RUN
+# # ==============================================================================
+
+# print("=== STEP 2: QC filtering by run ===")
+
+# qc_filter_run <- function(betas_run, detP_run, targets_run, run_id) {
+#   print(paste("Processing RUN", run_id))
   
-  # Sample filter
-  good_samples <- which(colMeans(detP_run) < 0.05)
-  betas_run <- betas_run[, good_samples]
-  detP_run <- detP_run[, good_samples]
-  targets_run <- targets_run[good_samples, ]
+#   # Filter samples with poor detection p-values
+#   good_samples <- which(colMeans(detP_run) < 0.05)
+#   if (length(good_samples) == 0) {
+#     warning(paste("No good samples in RUN", run_id))
+#     return(NULL)
+#   }
   
-  # CpG filter
-  keep <- rowSums(detP_run < 0.05) == ncol(betas_run)
-  betas_run <- betas_run[keep, ]
-  detP_run <- detP_run[keep, ]
+#   betas_run <- betas_run[, good_samples, drop = FALSE]
+#   detP_run <- detP_run[, good_samples, drop = FALSE]
+#   targets_run <- targets_run[good_samples, ]
   
-  # Remove NA and non-CpGs
-  betas_run <- na.exclude(betas_run)
-  betas_run <- betas_run[grep("cg", rownames(betas_run)), ]
-  detP_run <- detP_run[rownames(betas_run), ]
+#   # Keep probes detected in all remaining samples
+#   keep_probes <- rowSums(detP_run < 0.05) == ncol(betas_run)
+#   betas_run <- betas_run[keep_probes, ]
+#   detP_run <- detP_run[keep_probes, ]
   
-  # Remove sex CpGs
-  sex_cpgs <- annoMouse$Name[annoMouse$chr %in% c("chrX", "chrY")]
-  betas_run <- betas_run[!rownames(betas_run) %in% sex_cpgs, ]
-  detP_run <- detP_run[rownames(betas_run), ]
+#   # Remove probes with NA/NaN values
+#   complete_idx <- complete.cases(betas_run)
+#   betas_run <- betas_run[complete_idx, ]
+#   detP_run <- detP_run[complete_idx, ]
   
-  # Store
-  betas_by_run[[paste0("RUN", run_id)]] <- betas_run
-  detP_by_run[[paste0("RUN", run_id)]] <- detP_run
-  targets_by_run[[paste0("RUN", run_id)]] <- targets_run
-}
-
-# Combine RUNs 1 & 2
-if ("RUN1" %in% names(betas_by_run) && "RUN2" %in% names(betas_by_run)) {
-  common_cpgs_12 <- intersect(rownames(betas_by_run$RUN1), rownames(betas_by_run$RUN2))
-  betas_RUN1_2 <- cbind(betas_by_run$RUN1[common_cpgs_12, ], betas_by_run$RUN2[common_cpgs_12, ])
-  detP_RUN1_2 <- cbind(detP_by_run$RUN1[common_cpgs_12, ], detP_by_run$RUN2[common_cpgs_12, ])
-  write.csv(betas_RUN1_2, "betas_RUN1_2.csv")
-}
-
-# Combine RUNs 3, 4 & 5
-run_names_345 <- paste0("RUN", 3:5)
-available_345 <- run_names_345[run_names_345 %in% names(betas_by_run)]
-if (length(available_345) > 1) {
-  common_cpgs_345 <- Reduce(intersect, lapply(available_345, function(x) rownames(betas_by_run[[x]])))
-  betas_list_345 <- lapply(available_345, function(x) betas_by_run[[x]][common_cpgs_345, ])
-  betas_RUN3_4_5 <- do.call(cbind, betas_list_345)
-  write.csv(betas_RUN3_4_5, "betas_RUN3_4_5.csv")
-}
-
-# === COMBAT NORMALIZATION ===
-print("=== COMBAT NORMALIZATION ===")
-if (exists("betas_RUN1_2") && exists("betas_RUN3_4_5")) {
-  common_cpgs_all <- intersect(rownames(betas_RUN1_2), rownames(betas_RUN3_4_5))
-  # Combine RUNs 1 & 2 and 3–5 (this is above here already)
-  betas_combined <- cbind(
-    betas_RUN1_2[common_cpgs_all, ],
-    betas_RUN3_4_5[common_cpgs_all, ]
-  )
-
-  # === Rename columns of betas_combined to sample names from master_samplesheet ===
-  print("Renaming columns...")
-  samplesheet <- read.csv("/Users/elliottseo/Documents/GitHub/methyl_data_pipeline/data/master_samplesheet.csv", header=TRUE)
-  samplesheet$Basename <- paste0(samplesheet$BEADCHIP, "_", samplesheet$POSITION)
-  samplesheet$Samples <- paste0(samplesheet$tb, "_", samplesheet$RUN)
-
-  # Match sample names based on column names in betas_combined
-  matching_samples <- samplesheet[samplesheet$Basename %in% colnames(betas_combined), ]
-  matching_samples <- matching_samples[match(colnames(betas_combined), matching_samples$Basename), ]
-
-  # Check for mismatches
-  if (!all(matching_samples$Basename == colnames(betas_combined))) {
-    stop("Mismatch in sample order between betas_combined and master sample sheet.")
-  }
-
-  # Rename columns
-  colnames(betas_combined) <- matching_samples$Samples
-
-  # Continue with batch definition for ComBat
-  batch <- c(rep(1, ncol(betas_RUN1_2)), rep(2, ncol(betas_RUN3_4_5)))
-  print("Applying ComBat...")
-  betas_combat <- ComBat(dat = betas_combined, batch = batch, mod = NULL)
-  write.csv(betas_combat, "betas_combat_normalized.csv")
-
+#   # Keep only CpG probes
+#   cpg_idx <- grep("^cg", rownames(betas_run))
+#   betas_run <- betas_run[cpg_idx, ]
+#   detP_run <- detP_run[rownames(betas_run), ]
   
-  # === BMIQ NORMALIZATION ===
-  print("=== BMIQ NORMALIZATION ===")
+#   # Remove sex chromosome probes
+#   sex_cpgs <- annoMouse$Name[annoMouse$chr %in% c("chrX", "chrY")]
+#   keep_sex <- !rownames(betas_run) %in% sex_cpgs
+#   betas_run <- betas_run[keep_sex, ]
+#   detP_run <- detP_run[rownames(betas_run), ]
   
-  # Create a temporary CSV file with the ComBat-normalized data
-  temp_beta_file <- "temp_betas_combat.csv"
-  betas_combat_df <- data.frame(CpG_ID = rownames(betas_combat), betas_combat, stringsAsFactors = FALSE)
-  write.csv(betas_combat_df, temp_beta_file, row.names = FALSE)
+#   print(paste("RUN", run_id, "after QC:", nrow(betas_run), "probes x", ncol(betas_run), "samples"))
   
-  # You'll need to specify the path to your probe annotation file
-  probes_file <- "/Users/elliottseo/Documents/GitHub/methyl_data_pipeline/data/probesample.xlsx"  # UPDATE THIS PATH
+#   return(list(betas = betas_run, detP = detP_run, targets = targets_run))
+# }
+
+# # Apply QC filtering to each run
+# unique_runs <- sort(unique(targets$RUN))
+# filtered_data <- list()
+
+# for (run_id in unique_runs) {
+#   idx <- targets$RUN == run_id
+#   result <- qc_filter_run(betas[, idx], detP[, idx], targets[idx, ], run_id)
+#   if (!is.null(result)) {
+#     filtered_data[[paste0("RUN", run_id)]] <- result
+#   }
+# }
+
+# # ==============================================================================
+# # STEP 3: BMIQ NORMALIZATION (PER RUN)
+# # ==============================================================================
+
+# print("=== STEP 3: BMIQ normalization per run ===")
+
+# run_bmiq_normalization <- function(betas_run, run_name) {
+#   print(paste("Running BMIQ on", run_name))
   
- # Check if probe file exists
-  if (file.exists(probes_file)) {
-    print("Applying BMIQ normalization...")
+#   temp_file <- paste0("temp_betas_", run_name, ".csv")
+#   write.csv(data.frame(CpG_ID = rownames(betas_run), betas_run), 
+#             file = temp_file, row.names = FALSE)
+  
+#   tryCatch({
+#     DoBMIQ(probes_path = "data/probesample.xlsx", beta_path = temp_file)
+#     load("bmiq/results/bmiq.Rd")
     
-    # Run BMIQ normalization with error handling
-    tryCatch({
-      DoBMIQ(probes_path = probes_file, beta_path = temp_beta_file)
-      
-      # Check if bmiq.Rd was created successfully
-      if (file.exists("/Users/elliottseo/Documents/GitHub/methyl_data_pipeline/bmiq/results/bmiq.Rd")) {
-        # Load the BMIQ-normalized data
-        load("/Users/elliottseo/Documents/GitHub/methyl_data_pipeline/bmiq/results/bmiq.Rd")  # This loads bmiq.m
-        print("Loaded bmiq.Rd")
-        
-        # Convert back to the same format as betas_combat
-        betas_combat_bmiq <- bmiq.m
-        
-        # Save the BMIQ-normalized data
-        write.csv(betas_combat_bmiq, "betas_combat_bmiq_normalized.csv")
-        
-        # Use BMIQ-normalized data for downstream analysis
-        final_betas <- betas_combat_bmiq
-        
-        print("BMIQ normalization completed successfully!")
-        
-      } else {
-        print("BMIQ normalization failed - bmiq.Rd file not created.")
-        print("Using ComBat-normalized data for downstream analysis.")
-        final_betas <- betas_combat
-      }
-    }, error = function(e) {
-      print(paste("Error during BMIQ normalization:", e$message))
-      print("Using ComBat-normalized data for downstream analysis.")
-      final_betas <<- betas_combat
-    })
+#     # Save BMIQ results
+#     write.csv(bmiq.m, paste0("betas_bmiq_", run_name, ".csv"))
+#     print(paste("BMIQ completed for", run_name, "- Probes:", nrow(bmiq.m), "Samples:", ncol(bmiq.m)))
     
-    # Clean up temporary file
-    if (file.exists(temp_beta_file)) {
-      file.remove(temp_beta_file)
-    }
-    
-  } else {
-    print(paste("Probe annotation file not found:", probes_file))
-    print("Using ComBat-normalized data for downstream analysis.")
-    final_betas <- betas_combat
-  }
+#     return(bmiq.m)
+#   }, error = function(e) {
+#     print(paste("BMIQ failed for", run_name, ":", e$message))
+#     print("Using raw data for this run...")
+#     return(betas_run)
+#   }, finally = {
+#     if (file.exists(temp_file)) file.remove(temp_file)
+#   })
+# }
 
-  # === SELECT & SAVE TOP 10,000 CpGs ===
-  print("Selecting top 10,000 most variable CpGs...")
-  top_cpgs <- names(sort(apply(final_betas, 1, var), decreasing = TRUE))[1:10000]
-  betas_final_top <- final_betas[top_cpgs, ]
+# # Apply BMIQ to each run
+# betas_bmiq_by_run <- list()
+# for (run_name in names(filtered_data)) {
+#   betas_bmiq_by_run[[run_name]] <- run_bmiq_normalization(
+#     filtered_data[[run_name]]$betas, run_name
+#   )
+# }
+
+# # ==============================================================================
+# # STEP 4: COMBAT NORMALIZATION USING COMBAT-MET
+# # ==============================================================================
+
+# print("=== STEP 4: Logit-M-value ComBat Normalization ===")
+
+# # --- Step 4.1: Combine runs as before ---
+# common_cpgs_12 <- Reduce(intersect, lapply(betas_bmiq_by_run[c("RUN1", "RUN2")], rownames))
+# betas_RUN1_2 <- cbind(
+#   betas_bmiq_by_run$RUN1[common_cpgs_12, , drop = FALSE],
+#   betas_bmiq_by_run$RUN2[common_cpgs_12, , drop = FALSE]
+# )
+
+# common_cpgs_345 <- Reduce(intersect, lapply(betas_bmiq_by_run[c("RUN3", "RUN4", "RUN5")], rownames))
+# betas_RUN3_4_5 <- cbind(
+#   betas_bmiq_by_run$RUN3[common_cpgs_345, , drop = FALSE],
+#   betas_bmiq_by_run$RUN4[common_cpgs_345, , drop = FALSE],
+#   betas_bmiq_by_run$RUN5[common_cpgs_345, , drop = FALSE]
+# )
+
+# common_cpgs_all <- intersect(rownames(betas_RUN1_2), rownames(betas_RUN3_4_5))
+# beta_combined <- cbind(
+#   betas_RUN1_2[common_cpgs_all, , drop = FALSE],
+#   betas_RUN3_4_5[common_cpgs_all, , drop = FALSE]
+# )
+
+# # --- Step 4.2: Match sample metadata ---
+# samplesheet <- read.csv("data/master_samplesheet.csv", stringsAsFactors = FALSE)
+# samplesheet$Basename <- paste0("X", samplesheet$BEADCHIP, "_", samplesheet$POSITION)
+# samplesheet$Samples <- paste0(samplesheet$tb, "_", samplesheet$RUN)
+
+# sample_names <- colnames(beta_combined)
+# matching_samples <- samplesheet[samplesheet$Basename %in% sample_names, ]
+# matching_samples <- matching_samples[match(sample_names, matching_samples$Basename), ]
+
+# if (!identical(sample_names, matching_samples$Basename)) {
+#   stop("Sample matching failed in batch correction step!")
+# }
+
+# # --- Step 4.3: Define batch and group ---
+# batch <- factor(ifelse(matching_samples$RUN %in% c(1, 2), "batch1", "batch2"))
+# group <- factor(matching_samples$cell.type)
+
+# # --- Step 4.4: Mild filtering (ensure safe logit transform) ---
+# epsilon <- 1e-5
+# beta_combined <- beta_combined[
+#   apply(beta_combined, 1, function(x) all(x > epsilon & x < (1 - epsilon))),
+# ]
+
+# cat("Remaining probes after logit-safe filtering:", nrow(beta_combined), "\n")
+
+# # --- Step 4.5: Convert to logit M-values ---
+# M <- log2(beta_combined / (1 - beta_combined))
+
+# # --- Step 4.6: Build design matrix ---
+# mod <- model.matrix(~ group)
+
+# # --- Step 4.7: Apply ComBat ---
+# library(sva)
+
+# M_corrected <- ComBat(
+#   dat = beta_combined,
+#   batch = batch,
+#   mod = mod,
+#   ref.batch = "batch1",   # <- anchor to batch1
+#   par.prior = TRUE,       # enable empirical Bayes
+#   prior.plots = FALSE
+# )
+
+# # --- Step 4.8: Back-transform to β-values ---
+# beta_corrected <- 2^M_corrected / (1 + 2^M_corrected)
+
+# # --- Optional: Save corrected β-values ---
+# dir.create("output", showWarnings = FALSE)
+# write.csv(beta_corrected, "output/betas_corrected_logit_combat.csv")
+
+# print("✅ Logit-M-value ComBat normalization complete.")
+
+
+# # ==============================================================================
+# # STEP 5: PCA ANALYSIS
+# # ==============================================================================
+
+# print("=== STEP 5: PCA analysis and visualization ===")
+
+# # Load sample sheet
+# samplesheet <- read.csv("data/master_samplesheet.csv", stringsAsFactors = FALSE)
+
+# # Construct Basename (must match colnames in beta matrix)
+# samplesheet$Basename <- paste0("X", samplesheet$BEADCHIP, "_", samplesheet$POSITION)
+
+# # Ensure your beta matrix uses Basename-style columns
+# # colnames(beta_corrected) should be like "X205243950045_R06C02"
+# if (!all(colnames(beta_corrected) %in% samplesheet$Basename)) {
+#   stop("Some column names in beta_corrected not found in sample sheet Basename.")
+# }
+
+# # Match sample names using Basename → tb
+# new_names <- samplesheet$tb[match(colnames(beta_corrected), samplesheet$Basename)]
+
+# # Apply new names
+# colnames(beta_corrected) <- new_names
+
+# # Use betas_combat as the final adjusted matrix
+# betas_final <- beta_corrected
+
+# # Clamp values to avoid Inf/NaN in log2 transformation (important for MDS)
+# betas_final[betas_final <= 0.001] <- 0.001
+# betas_final[betas_final >= 0.999] <- 0.999
+
+# # Subset for top 10K most variable probes
+# probe_vars <- apply(betas_final, 1, var)
+# top_probes <- names(sort(probe_vars, decreasing = TRUE))[1:10000]
+# betas_final_top <- betas_final[top_probes, ]
+
+# # Get sample metadata again and align
+# samplesheet <- read.csv("data/master_samplesheet.csv", header = TRUE)
+# samplesheet$Basename <- paste0(samplesheet$BEADCHIP, "_", samplesheet$POSITION)
+# samplesheet$Samples <- paste0(samplesheet$tb, "_", samplesheet$RUN)
+# samplesheet$Samples_unique <- make.unique(as.character(samplesheet$Samples))
+# rownames(samplesheet) <- samplesheet$Samples_unique
+
+# # Match metadata to columns
+# sample_match <- samplesheet[colnames(betas_final), ]
+
+# # Define color palettes
+# celltype_colors <- c("t-cells-DNA/RNA" = "#E31A1C", "THYMOCYTES" = "#1F78B4", "UNFRACTIONATED" = "#33A02C")
+# batch_colors <- c("Batch1" = "red", "Batch2" = "blue")
+
+# # Build color vectors
+# sample_celltype_colors <- celltype_colors[as.character(sample_match$cell.type)]
+# sample_match$Batch <- ifelse(sample_match$RUN <= 2, "Batch1", "Batch2")
+# sample_batch_colors <- batch_colors[sample_match$Batch]
+
+# # === Begin PCA Visualizations ===
+# print("Generating PCA plots...")
+
+# pdf("pca_simple_combat.pdf", width = 16, height = 8)
+# par(mfrow = c(2, 3))
+
+# # PCA by Cell Type (Top 10K probes)
+# plotMDS(betas_final_top, top = 10000, gene.selection = "common", col = sample_celltype_colors,
+#         main = "Top 10K CpGs - Cell Type", pch = 19, cex = 1.2)
+# legend("topright", legend = names(celltype_colors), col = celltype_colors, pch = 19, cex = 0.8)
+
+# # PCA by Cell Type (All probes)
+# plotMDS(betas_final, gene.selection = "common", col = sample_celltype_colors,
+#         main = "All CpGs - Cell Type", pch = 19, cex = 1.2)
+# legend("topright", legend = names(celltype_colors), col = celltype_colors, pch = 19, cex = 0.8)
+
+# # PCA by Batch (Top 10K probes)
+# plotMDS(betas_final_top, top = 10000, gene.selection = "common", col = sample_batch_colors,
+#         main = "Top 10K CpGs - Batch (should be mixed)", pch = 19, cex = 1.2)
+# legend("topright", legend = names(batch_colors), col = batch_colors, pch = 19)
+
+# # PCA by Batch (All CpGs)
+# plotMDS(betas_final, gene.selection = "common", col = sample_batch_colors,
+#         main = "All CpGs - Batch (should be mixed)", pch = 19, cex = 1.2)
+# legend("topright", legend = names(batch_colors), col = batch_colors, pch = 19)
+
+# # PCA by Experiment (if present)
+# if ("Experiment" %in% colnames(sample_match)) {
+#   exp_colors <- rainbow(length(unique(sample_match$Experiment)))
+#   names(exp_colors) <- unique(sample_match$Experiment)
+#   sample_exp_colors <- exp_colors[as.character(sample_match$Experiment)]
   
-  # Save with appropriate filename
-  if (exists("betas_combat_bmiq")) {
-    write.csv(betas_final_top, "betas_combat_bmiq_top10000.csv")
-    print("Saved: betas_combat_bmiq_top10000.csv")
-  } else {
-    write.csv(betas_final_top, "betas_combat_top10000.csv")
-    print("Saved: betas_combat_top10000.csv")
-  }
+#   plotMDS(betas_final, gene.selection = "common", col = sample_exp_colors,
+#           main = "All CpGs - Experiment", pch = 19, cex = 1.2)
+#   legend("topright", legend = names(exp_colors), col = exp_colors, pch = 19, cex = 0.7)
+# }
+
+# # Sample Label View
+# mds <- plotMDS(betas_final, gene.selection = "common", dim = c(1, 2), plot = FALSE)
+# plot(mds$x, mds$y,
+#      xlab = paste("Dimension 1 (", round(mds$var.explained[1], 1), "%)", sep = ""),
+#      ylab = paste("Dimension 2 (", round(mds$var.explained[2], 1), "%)", sep = ""),
+#      main = "Sample Labels", pch = 19, col = "black", cex = 0.8)
+# text(mds$x, mds$y, labels = colnames(betas_final), pos = 3, cex = 0.5)
+
+# dev.off()
+
+# print("✅ PCA plots saved to: pca_simple_combat.pdf")
+
+# # ==============================================================================
+# # STEP 5 ALT: PCA ANALYSIS BEFORE COMBAT NORMALIZATION
+# # ==============================================================================
+
+# print("=== STEP 5 ALT: PCA analysis BEFORE batch normalization ===")
+
+# # Load sample sheet
+# samplesheet <- read.csv("data/master_samplesheet.csv", stringsAsFactors = FALSE)
+
+# # Construct Basename (should match pre-ComBat colnames)
+# samplesheet$Basename <- paste0("X", samplesheet$BEADCHIP, "_", samplesheet$POSITION)
+# samplesheet$Samples <- samplesheet$tb  # readable names
+
+# # Ensure no duplicated Basename rows
+# samplesheet <- samplesheet[!duplicated(samplesheet$Basename), ]
+
+# # Rename beta matrix columns using tb names (from Basename)
+# sample_names <- colnames(beta_combined)
+# rename_map <- samplesheet$Samples[match(sample_names, samplesheet$Basename)]
+
+# # Check that renaming works
+# if (any(is.na(rename_map))) {
+#   stop("❌ Sample renaming failed: some Basename entries in beta_combined not found in sample sheet.")
+# }
+
+# # Apply renaming
+# colnames(beta_combined) <- rename_map
+
+# # Assign as final matrix for PCA
+# betas_uncorrected <- beta_combined
+
+# # Clamp extreme beta values to avoid issues with log2 distance
+# betas_uncorrected[betas_uncorrected <= 0.001] <- 0.001
+# betas_uncorrected[betas_uncorrected >= 0.999] <- 0.999
+
+# # Subset to top 10,000 most variable probes
+# probe_vars <- apply(betas_uncorrected, 1, var)
+# top_probes <- names(sort(probe_vars, decreasing = TRUE))[1:10000]
+# betas_uncorrected_top <- betas_uncorrected[top_probes, ]
+
+# # Match metadata to renamed columns
+# sample_match <- samplesheet[match(colnames(betas_uncorrected), samplesheet$Samples), ]
+
+# # Build color vectors for cell type and batch
+# celltype_colors <- c("t-cells-DNA/RNA" = "#E31A1C", "THYMOCYTES" = "#1F78B4", "UNFRACTIONATED" = "#33A02C")
+# sample_celltype_colors <- celltype_colors[as.character(sample_match$cell.type)]
+
+# sample_match$Batch <- ifelse(sample_match$RUN <= 2, "Batch1", "Batch2")
+# batch_colors <- c("Batch1" = "red", "Batch2" = "blue")
+# sample_batch_colors <- batch_colors[sample_match$Batch]
+
+# # === PCA PLOTTING ===
+# print("Generating PCA plots BEFORE batch correction...")
+
+# pdf("pca_before_combat.pdf", width = 16, height = 8)
+# par(mfrow = c(2, 3))
+
+# # PCA by Cell Type (Top 10K CpGs)
+# plotMDS(betas_uncorrected_top, top = 10000, gene.selection = "common", col = sample_celltype_colors,
+#         main = "Top 10K CpGs (Pre-ComBat) - Cell Type", pch = 19, cex = 1.2)
+# legend("topright", legend = names(celltype_colors), col = celltype_colors, pch = 19, cex = 0.8)
+
+# # PCA by Cell Type (All CpGs)
+# plotMDS(betas_uncorrected, gene.selection = "common", col = sample_celltype_colors,
+#         main = "All CpGs (Pre-ComBat) - Cell Type", pch = 19, cex = 1.2)
+# legend("topright", legend = names(celltype_colors), col = celltype_colors, pch = 19, cex = 0.8)
+
+# # PCA by Batch (Top 10K CpGs)
+# plotMDS(betas_uncorrected_top, top = 10000, gene.selection = "common", col = sample_batch_colors,
+#         main = "Top 10K CpGs (Pre-ComBat) - Batch", pch = 19, cex = 1.2)
+# legend("topright", legend = names(batch_colors), col = batch_colors, pch = 19)
+
+# # PCA by Batch (All CpGs)
+# plotMDS(betas_uncorrected, gene.selection = "common", col = sample_batch_colors,
+#         main = "All CpGs (Pre-ComBat) - Batch", pch = 19, cex = 1.2)
+# legend("topright", legend = names(batch_colors), col = batch_colors, pch = 19)
+
+# # PCA by Experiment (if present)
+# if ("Experiment" %in% colnames(sample_match)) {
+#   exp_colors <- rainbow(length(unique(sample_match$Experiment)))
+#   names(exp_colors) <- unique(sample_match$Experiment)
+#   sample_exp_colors <- exp_colors[as.character(sample_match$Experiment)]
   
-} else {
-  print("Cannot apply ComBat — missing combined datasets.")
-}
+#   plotMDS(betas_uncorrected, gene.selection = "common", col = sample_exp_colors,
+#           main = "All CpGs (Pre-ComBat) - Experiment", pch = 19, cex = 1.2)
+#   legend("topright", legend = names(exp_colors), col = exp_colors, pch = 19, cex = 0.7)
+# }
 
-# === PCA PLOTS ===
+# # PCA by Sample Label
+# mds <- plotMDS(betas_uncorrected, gene.selection = "common", dim = c(1, 2), plot = FALSE)
+# plot(mds$x, mds$y,
+#      xlab = paste("Dimension 1 (", round(mds$var.explained[1], 1), "%)", sep = ""),
+#      ylab = paste("Dimension 2 (", round(mds$var.explained[2], 1), "%)", sep = ""),
+#      main = "Sample Labels (Pre-ComBat)", pch = 19, col = "black", cex = 0.8)
+# text(mds$x, mds$y, labels = colnames(betas_uncorrected), pos = 3, cex = 0.5)
 
-# Prepare color definitions
-celltype_colors <- c("t-cells-DNA/RNA" = "#E31A1C", "THYMOCYTES" = "#1F78B4", "UNFRACTIONATED" = "#33A02C")
-sample_celltype_colors <- celltype_colors[targets$cell.type]
+# dev.off()
 
-targets$strain <- tolower(targets$strain)
-targets$strain <- gsub("[()_]", "", targets$strain)
-strain_names <- unique(targets$strain)
-n_strains <- length(strain_names)
-strain_palette <- c(brewer.pal(8, "Set1"), brewer.pal(3, "Set2"))[1:n_strains]
-names(strain_palette) <- strain_names
-sample_strain_colors <- strain_palette[targets$strain]
+# print("✅ PCA BEFORE ComBat saved to: pca_before_combat.pdf")
 
-# Top 10,000 most variable CpGs
-top_cpgs <- names(sort(apply(betas, 1, var), decreasing = TRUE))[1:10000]
-betas_top <- betas[top_cpgs, ]
+# ==============================================================================
+# STEP 6: SAVE RESULTS
+# ==============================================================================
 
-# Use all CpGs
-betas_all <- final_betas
+print("=== STEP 6: Saving results ===")
 
-# === 1. PCA - Top 10,000 CpGs - Color by Cell Type ===
-pdf("pca_top10000_by_celltype.pdf", width=10, height=8)
-plotMDS(betas_top, top=10000, gene.selection="common", col=sample_celltype_colors, dim=c(1,2), pch=19, cex=1.2)
-legend("topright", legend=names(celltype_colors), col=celltype_colors, pch=19, cex=0.9, bg="white", title="Cell Type")
-dev.off()
+# Save beta matrix
+write.csv(betas_final_top, "betas_combat_adjusted_final.csv")
 
-# === 2. PCA - All CpGs - Color by Cell Type ===
-pdf("pca_all_by_celltype.pdf", width=10, height=8)
-plotMDS(betas_all, gene.selection="common", col=sample_celltype_colors, dim=c(1,2), pch=19, cex=1.2)
-legend("topright", legend=names(celltype_colors), col=celltype_colors, pch=19, cex=0.9, bg="white", title="Cell Type")
-dev.off()
+# Rebuild metadata to save
+meta_final <- sample_match[match(colnames(betas_final_top), rownames(sample_match)), ]
+write.csv(meta_final, "metadata_final.csv", row.names = FALSE)
 
-# === 3. PCA - Top 10,000 CpGs - Color by Strain ===
-pdf("pca_top10000_by_strain.pdf", width=12, height=8)
-plotMDS(betas_top, top=10000, gene.selection="common", col=sample_strain_colors, dim=c(1,2), pch=19, cex=1.2)
-if (n_strains <= 6) {
-  legend("topright", legend=strain_names, col=strain_palette, pch=19, cex=0.8, bg="white", title="Strain")
-} else {
-  mid_point <- ceiling(n_strains/2)
-  legend("topright", legend=strain_names[1:mid_point], col=strain_palette[1:mid_point], pch=19, cex=0.7, bg="white", title="Strain")
-  legend("bottomright", legend=strain_names[(mid_point+1):n_strains], col=strain_palette[(mid_point+1):n_strains], pch=19, cex=0.7, bg="white")
-}
-dev.off()
+# Create summary statistics
+summary_stats <- data.frame(
+  Metric = c("Initial samples", "Initial probes", "Final samples", "Final probes",
+             "Runs processed", "Common CpGs"),
+  Value = c(ncol(betas), nrow(betas), ncol(betas_final_top), nrow(betas_final_top),
+            length(unique_runs), length(common_cpgs_all))
+)
+write.csv(summary_stats, "processing_summary.csv", row.names = FALSE)
 
-# === 4. PCA - All CpGs - Color by Strain ===
-pdf("pca_all_by_strain.pdf", width=12, height=8)
-plotMDS(betas_all, gene.selection="common", col=sample_strain_colors, dim=c(1,2), pch=19, cex=1.2)
-if (n_strains <= 6) {
-  legend("topright", legend=strain_names, col=strain_palette, pch=19, cex=0.8, bg="white", title="Strain")
-} else {
-  mid_point <- ceiling(n_strains/2)
-  legend("topright", legend=strain_names[1:mid_point], col=strain_palette[1:mid_point], pch=19, cex=0.7, bg="white", title="Strain")
-  legend("bottomright", legend=strain_names[(mid_point+1):n_strains], col=strain_palette[(mid_point+1):n_strains], pch=19, cex=0.7, bg="white")
-}
-
-# === 5. PCA - All CpGs - Labels Only (No Color) ===
-pdf("pca_all_labeled.pdf", width=12, height=10)
-mds <- plotMDS(betas_all, gene.selection="common", dim=c(1,2), plot=FALSE)
-
-plot(mds$x, mds$y,
-     xlab=paste("Dimension 1 (", round(mds$var.explained[1], 1), "%)", sep=""),
-     ylab=paste("Dimension 2 (", round(mds$var.explained[2], 1), "%)", sep=""),
-     main="PCA: All CpGs with Sample Labels",
-     pch=19, col="black", cex=0.8)
-
-text(mds$x, mds$y, labels=targets$Samples, pos=3, cex=0.7)
-dev.off()
+print("=== PIPELINE COMPLETED SUCCESSFULLY ===")
+print("Final dataset:")
+print(paste("Samples:", ncol(betas_adjusted)))
+print(paste("Probes:", nrow(betas_adjusted)))
+print(paste("Runs processed:", length(unique_runs)))

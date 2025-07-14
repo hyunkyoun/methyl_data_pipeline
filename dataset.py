@@ -3,7 +3,7 @@ import os
 import re
 
 # === USER INPUT FILES ===
-beta_file = "/Users/elliottseo/Documents/GitHub/methyl_data_pipeline/betas_combat_bmiq_top10000.csv"     # Replace with actual filename
+beta_file = "/Users/elliottseo/Documents/GitHub/methyl_data_pipeline/betas_final_top_10000.csv"     # Replace with actual filename
 sample_sheet_file = "/Users/elliottseo/Documents/GitHub/methyl_data_pipeline/data/master_samplesheet.csv" # Replace with actual filename
 
 # === Load data ===
@@ -71,7 +71,7 @@ for _, row in sample_sheet.iterrows():
     experiment_group_data[exp][group].append(full_column_name)
 
 # === Save each group to plots/ folder ===
-base_dir = "plots_10k"
+base_dir = "plots_10k_new"
 os.makedirs(base_dir, exist_ok=True)
 
 for exp, groups in experiment_group_data.items():
@@ -88,7 +88,7 @@ for exp, groups in experiment_group_data.items():
         out_path = os.path.join(exp_dir, f"{group}.csv")
         group_df.to_csv(out_path)
 
-print("✅ All beta value group files saved under 'plots_10k/'")
+print("✅ All beta value group files saved under 'plots_10k_new/'")
 print(f"📊 Processed {len(sample_sheet)} samples across {len(experiment_group_data)} experiments")
 
 # Print summary of matches
