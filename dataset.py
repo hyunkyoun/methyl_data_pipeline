@@ -3,50 +3,55 @@ import os
 import re
 
 # === USER INPUT FILES ===
-beta_file = "/Users/elliottseo/Documents/GitHub/methyl_data_pipeline/betas_final_top_10000.csv"     # Replace with actual filename
-sample_sheet_file = "/Users/elliottseo/Documents/GitHub/methyl_data_pipeline/data/master_samplesheet.csv" # Replace with actual filename
+beta_file = "/Users/elliottseo/Documents/GitHub/methyl_data_pipeline/betas_combat_adjusted_final.csv"     # Replace with actual filename
+sample_sheet_file = "/Users/elliottseo/Documents/GitHub/methyl_data_pipeline/data/samplesheet.csv" # Replace with actual filename
 
 # === Load data ===
 beta_df = pd.read_csv(beta_file)
 sample_sheet = pd.read_csv(sample_sheet_file)
 
-# === Normalize sample IDs ===
-sample_sheet["tb"] = sample_sheet["tb"].astype(str).str.strip().str.lower()
+# === Create sample mapping based on Sample ID ===
+# The beta file columns are named like "TB{Sample ID}_{Experiment}"
+# We need to match these with the "Sample ID" column in the sample sheet
 
-# Extract base column names (before underscore) from beta_df columns
+# Extract sample information from beta column names
 beta_columns_original = beta_df.columns.astype(str).str.strip()
-beta_columns_normalized = beta_columns_original.str.lower()
-beta_base_columns_normalized = [col.split('_')[0] for col in beta_columns_normalized]
+# Skip the first column (CpG_ID column)
+sample_columns = beta_columns_original[1:]
 
-# Create mapping from normalized base column names to original full column names
-column_mapping = dict(zip(beta_base_columns_normalized, beta_columns_original))
+# Create mapping from Sample ID to full column names
+sample_id_to_column = {}
+for col in sample_columns:
+    # Extract TB number and experiment from column names like "TB123_1"
+    match = re.match(r'TB(\d+)_(\d+)', col)
+    if match:
+        sample_id = int(match.group(1))
+        sample_id_to_column[sample_id] = col
 
 # === Filter samples ===
-sample_sheet = sample_sheet.dropna(subset=["Experiment"])
-# Filter sample sheet to only include samples that have matching base names in beta_df
-sample_sheet = sample_sheet[sample_sheet["tb"].isin(beta_base_columns_normalized)]
+sample_sheet = sample_sheet.dropna(subset=["Experiment", "Genotype"])
+# Filter sample sheet to only include samples that have matching Sample ID in beta_df
+sample_sheet = sample_sheet[sample_sheet["Sample ID"].isin(sample_id_to_column.keys())]
 
-# === Build group label from 4 columns ===
-def make_group_label(row):
-    parts = [
-        str(row["strain"]).strip(),
-        str(row["genotype_dp10"]).strip(),
-        str(row["genotype_dp16"]).strip(),
-        str(row["Runx1"]).strip()
-    ]
-    label = "_".join(parts)
-    return re.sub(r'[^\w\-]', '_', label)
+# === Build group label from Genotype column ===
+def make_group_label(genotype_value):
+    """Clean the genotype value to make it a valid filename"""
+    genotype_str = str(genotype_value).strip()
+    # Replace any non-alphanumeric characters with underscores
+    clean_genotype = re.sub(r'[^\w\-]', '_', genotype_str)
+    return clean_genotype
 
-sample_sheet["group_label"] = sample_sheet.apply(make_group_label, axis=1)
+sample_sheet["group_label"] = sample_sheet["Genotype"].apply(make_group_label)
 
 # === Build filtered beta matrix ===
 filtered_beta_df = beta_df.set_index(beta_df.columns[0])
 
 # Create a list of full column names that match our filtered samples
 matching_columns = []
-for sample_id in sample_sheet["tb"]:
-    if sample_id in column_mapping:
-        matching_columns.append(column_mapping[sample_id])
+for _, row in sample_sheet.iterrows():
+    sample_id = row["Sample ID"]
+    if sample_id in sample_id_to_column:
+        matching_columns.append(sample_id_to_column[sample_id])
 
 # Filter beta dataframe to only include matching columns
 filtered_beta_df = filtered_beta_df.loc[:, matching_columns]
@@ -56,11 +61,11 @@ experiment_group_data = {}
 for _, row in sample_sheet.iterrows():
     exp = row["Experiment"]
     group = row["group_label"]
-    sample_id = row["tb"]
+    sample_id = row["Sample ID"]
     
     # Get the full column name for this sample
-    if sample_id in column_mapping:
-        full_column_name = column_mapping[sample_id]
+    if sample_id in sample_id_to_column:
+        full_column_name = sample_id_to_column[sample_id]
     else:
         continue  # Skip if no matching column found
 
@@ -71,11 +76,11 @@ for _, row in sample_sheet.iterrows():
     experiment_group_data[exp][group].append(full_column_name)
 
 # === Save each group to plots/ folder ===
-base_dir = "plots_10k_new"
+base_dir = "plots_genotype"
 os.makedirs(base_dir, exist_ok=True)
 
 for exp, groups in experiment_group_data.items():
-    exp_dir = os.path.join(base_dir, re.sub(r'[^\w\-]', '_', exp))
+    exp_dir = os.path.join(base_dir, f"Experiment_{exp}")
     os.makedirs(exp_dir, exist_ok=True)
 
     for group, samples in groups.items():
@@ -88,7 +93,7 @@ for exp, groups in experiment_group_data.items():
         out_path = os.path.join(exp_dir, f"{group}.csv")
         group_df.to_csv(out_path)
 
-print("✅ All beta value group files saved under 'plots_10k_new/'")
+print("✅ All beta value group files saved under 'plots_10k_genotype/'")
 print(f"📊 Processed {len(sample_sheet)} samples across {len(experiment_group_data)} experiments")
 
 # Print summary of matches
@@ -96,29 +101,32 @@ total_beta_columns = len(beta_df.columns) - 1  # Subtract 1 for index column
 matched_samples = len(matching_columns)
 print(f"🔍 Matched {matched_samples} samples out of {total_beta_columns} beta columns and {len(sample_sheet)} sample sheet entries")
 
+# Print experiment and genotype breakdown
+print("\n📋 Experiment and Genotype breakdown:")
+for exp in sorted(experiment_group_data.keys()):
+    print(f"  Experiment {exp}:")
+    for group, samples in experiment_group_data[exp].items():
+        print(f"    - {group}: {len(samples)} samples")
+
 # Load original sample sheet to show unmatched samples
 original_sample_sheet = pd.read_csv(sample_sheet_file)
-original_sample_sheet["tb"] = original_sample_sheet["tb"].astype(str).str.strip().str.lower()
 original_sample_sheet = original_sample_sheet.dropna(subset=["Experiment"])
 
 # Find unmatched samples from sample sheet
-unmatched_from_sample_sheet = original_sample_sheet[~original_sample_sheet["tb"].isin(beta_base_columns_normalized)]
+unmatched_from_sample_sheet = original_sample_sheet[~original_sample_sheet["Sample ID"].isin(sample_id_to_column.keys())]
 if len(unmatched_from_sample_sheet) > 0:
     print(f"\n❌ Sample sheet entries NOT found in beta table ({len(unmatched_from_sample_sheet)}):")
     for _, row in unmatched_from_sample_sheet.iterrows():
-        print(f"   - {row['tb']} (Experiment: {row['Experiment']})")
+        print(f"   - Sample ID {row['Sample ID']} (Experiment: {row['Experiment']})")
 else:
     print("\n✅ All sample sheet entries found in beta table")
 
 # Find unmatched beta columns
-# Get all sample sheet tb values (normalized)
-sample_sheet_tb_set = set(original_sample_sheet["tb"])
-
-# Find beta columns whose base names are NOT in sample sheet
+sample_sheet_ids = set(original_sample_sheet["Sample ID"])
 unmatched_beta_columns = []
-for i, base_name in enumerate(beta_base_columns_normalized):
-    if base_name not in sample_sheet_tb_set:
-        unmatched_beta_columns.append(beta_columns_original[i])
+for sample_id, col_name in sample_id_to_column.items():
+    if sample_id not in sample_sheet_ids:
+        unmatched_beta_columns.append(col_name)
 
 if len(unmatched_beta_columns) > 0:
     print(f"\n❌ Beta table columns NOT found in sample sheet ({len(unmatched_beta_columns)}):")
@@ -126,3 +134,10 @@ if len(unmatched_beta_columns) > 0:
         print(f"   - {col}")
 else:
     print("\n✅ All beta table columns found in sample sheet")
+
+# Show unique genotypes found
+unique_genotypes = sample_sheet["Genotype"].unique()
+print(f"\n🧬 Found {len(unique_genotypes)} unique genotypes:")
+for genotype in sorted(unique_genotypes):
+    count = len(sample_sheet[sample_sheet["Genotype"] == genotype])
+    print(f"   - {genotype}: {count} samples")

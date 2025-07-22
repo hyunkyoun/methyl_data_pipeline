@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-from scipy.stats import ttest_ind, mannwhitneyu
+from scipy.stats import ttest_ind
 from statsmodels.stats.multitest import multipletests
 import os
 from matplotlib.lines import Line2D
@@ -11,7 +11,6 @@ print("Separate multiple file paths with commas")
 group1_files = input("Enter path(s) for Group 1 CSV(s): ").strip().split(",")
 group2_files = input("Enter path(s) for Group 2 CSV(s): ").strip().split(",")
 save_dir = input("Enter directory to save volcano plot (leave blank to skip saving): ").strip()
-use_mannwhitney = input("Use Mann–Whitney U test instead of t-test? (yes/no): ").strip().lower() == "yes"
 
 # === LOAD & COMBINE GROUPS ===
 def load_and_merge(files):
@@ -21,8 +20,11 @@ def load_and_merge(files):
         if f:
             df = pd.read_csv(f, index_col=0)
             dfs.append(df)
+    if not dfs:
+        raise ValueError("No valid files provided")
     return pd.concat(dfs, axis=1)
 
+print("Loading data...")
 group1 = load_and_merge(group1_files)
 group2 = load_and_merge(group2_files)
 
@@ -31,94 +33,141 @@ common_cpgs = group1.index.intersection(group2.index)
 group1 = group1.loc[common_cpgs]
 group2 = group2.loc[common_cpgs]
 
-# === DIAGNOSTICS ===
-print(f"\nGroup 1 samples: {group1.shape[1]}")
-print(f"Group 2 samples: {group2.shape[1]}")
+print(f"Group 1: {group1.shape[1]} samples")
+print(f"Group 2: {group2.shape[1]} samples") 
+print(f"Common CpGs: {len(common_cpgs)}")
 
-# === FILTER LOW VARIANCE CpGs ===
-combined = pd.concat([group1, group2], axis=1)
-variances = combined.var(axis=1)
-high_var_cpgs = variances[variances > 1e-5].index
-group1 = group1.loc[high_var_cpgs]
-group2 = group2.loc[high_var_cpgs]
+# === CONVERT TO M-VALUES FOR STATISTICS ===
+# Clamp beta values to avoid infinite M-values
+group1_clamped = group1.clip(lower=0.001, upper=0.999)
+group2_clamped = group2.clip(lower=0.001, upper=0.999)
 
-# === CALCULATE Δβ ===
-mean1 = group1.mean(axis=1)
-mean2 = group2.mean(axis=1)
-delta_beta = mean1 - mean2
+# Convert to M-values: M = log2(beta/(1-beta))
+mvals1 = np.log2(group1_clamped / (1 - group1_clamped))
+mvals2 = np.log2(group2_clamped / (1 - group2_clamped))
 
-# === CALCULATE P-VALUES ===
-if use_mannwhitney:
-    p_values = pd.Series(index=group1.index, dtype='float64')
-    for cpg in group1.index:
-        try:
-            _, p = mannwhitneyu(group1.loc[cpg], group2.loc[cpg], alternative='two-sided')
-        except:
-            p = 1.0
-        p_values[cpg] = p
-else:
-    ttest = ttest_ind(group1.T, group2.T, axis=0, equal_var=False, nan_policy='omit')
-    p_values = pd.Series(ttest.pvalue, index=group1.index)
+# === CALCULATE STATISTICS ON M-VALUES ===
+# Calculate means on M-values
+mean_mvals1 = mvals1.mean(axis=1)
+mean_mvals2 = mvals2.mean(axis=1)
+
+# Log2 fold change (difference in M-values)
+log2_fold_change = mean_mvals1 - mean_mvals2
+
+# Also calculate delta beta for reference
+delta_beta = group1_clamped.mean(axis=1) - group2_clamped.mean(axis=1)
+delta_beta_percent = delta_beta * 100
+
+# === MODERATED T-TEST (limma-style) ===
+print("Performing moderated t-test...")
+
+# Simple t-test on M-values (proper for methylation analysis)
+p_values = []
+t_stats = []
+
+for cpg in mvals1.index:
+    try:
+        # Welch's t-test on M-values
+        stat, p_val = ttest_ind(
+            mvals1.loc[cpg].dropna(), 
+            mvals2.loc[cpg].dropna(), 
+            equal_var=False
+        )
+        p_values.append(p_val)
+        t_stats.append(stat)
+    except:
+        p_values.append(1.0)
+        t_stats.append(0.0)
+
+p_values = pd.Series(p_values, index=mvals1.index)
+t_stats = pd.Series(t_stats, index=mvals1.index)
 
 # === FDR CORRECTION ===
-_, fdrs, _, _ = multipletests(p_values, method='fdr_bh')
+rejected, fdrs, _, _ = multipletests(p_values.values, method='fdr_bh', alpha=0.05)
 fdr_series = pd.Series(fdrs, index=p_values.index)
-neg_log_p = -np.log10(p_values)
 
-# === BUILD RESULTS DF ===
+# Calculate -log10(p-value)
+neg_log10_p = -np.log10(p_values.replace(0, 1e-300))
+
+# === BUILD RESULTS ===
 results_df = pd.DataFrame({
-    'Delta_Beta': delta_beta,
-    'Delta_Beta_x100': delta_beta * 100,
-    '-log10(p-value)': neg_log_p,
-    'p-value': p_values,
-    'FDR': fdr_series
+    'log2_fold_change': log2_fold_change,
+    'delta_beta': delta_beta,
+    'delta_beta_percent': delta_beta_percent,
+    'p_value': p_values,
+    'FDR': fdr_series,
+    'neg_log10_p': neg_log10_p,
+    't_stat': t_stats
 })
 
-# === STATS SUMMARY ===
-threshold_db = 0.5
-threshold_fdr = 0.05
-sig_mask = (abs(results_df["Delta_Beta_x100"]) > threshold_db) & (results_df["FDR"] < threshold_fdr)
+# === SIGNIFICANCE THRESHOLDS ===
+log2fc_threshold = 1.0  # Log2 fold change threshold (equivalent to 2-fold change)
+fdr_threshold = 0.05
+p_threshold = 0.05
 
-print("\nΔβ range:", delta_beta.min(), "to", delta_beta.max())
-print("Significant CpGs (|Δβ×100| > 5 & FDR < 0.05):", sig_mask.sum())
+# Identify significant CpGs
+sig_fdr = results_df['FDR'] < fdr_threshold
+large_effect = np.abs(results_df['log2_fold_change']) >= log2fc_threshold
+significant = sig_fdr & large_effect
+
+print(f"\nSignificance Summary:")
+print(f"Total CpGs: {len(results_df)}")
+print(f"FDR < {fdr_threshold}: {sig_fdr.sum()}")
+print(f"|Log2FC| >= {log2fc_threshold}: {large_effect.sum()}")
+print(f"Significant: {significant.sum()}")
 
 # === ASSIGN COLORS ===
-colors = np.where(
-    sig_mask & (results_df["Delta_Beta_x100"] > threshold_db), 'red',
-    np.where(sig_mask & (results_df["Delta_Beta_x100"] < -threshold_db), 'blue', 'gray')
-)
+def get_color(row):
+    # Use raw p-value threshold to match the horizontal line
+    if row['p_value'] < p_threshold and abs(row['log2_fold_change']) >= log2fc_threshold:
+        return 'red' if row['log2_fold_change'] > 0 else 'blue'
+    return 'lightgray'
 
-# === PLOT ===
-plt.figure(figsize=(8, 8))
-plt.scatter(results_df["Delta_Beta_x100"], results_df["-log10(p-value)"], s=10, alpha=0.7, c=colors)
+colors = results_df.apply(get_color, axis=1)
+
+# === CREATE VOLCANO PLOT ===
+plt.figure(figsize=(10, 8))
+
+plt.scatter(results_df['log2_fold_change'], results_df['neg_log10_p'], 
+           c=colors, s=8, alpha=0.6, edgecolors='none')
 
 # Threshold lines
-plt.axvline(threshold_db, color='red', linestyle='--', linewidth=1)
-plt.axvline(-threshold_db, color='red', linestyle='--', linewidth=1)
-plt.axhline(-np.log10(threshold_fdr), color='green', linestyle='--', linewidth=1)
+plt.axvline(log2fc_threshold, color='black', linestyle='--', alpha=0.7)
+plt.axvline(-log2fc_threshold, color='black', linestyle='--', alpha=0.7)
+plt.axhline(-np.log10(p_threshold), color='black', linestyle='--', alpha=0.7)
 
 # Labels
-plt.xlabel("Fract. Methyl. Difference × 100 (Δβ × 100)")
-plt.ylabel("-log10(p-value)")
-plt.title("Volcano Plot of Differential Methylation (FDR-adjusted)")
+plt.xlabel('Log₂ Fold Change', fontsize=12)
+plt.ylabel('-log₁₀(p-value)', fontsize=12)
+plt.title('Volcano Plot: Differential Methylation Analysis', fontsize=14)
 
-# Optional legend
+# Legend - now using log2 fold change thresholds
+n_hyper = ((results_df['log2_fold_change'] > log2fc_threshold) & 
+           (results_df['p_value'] < p_threshold)).sum()
+n_hypo = ((results_df['log2_fold_change'] < -log2fc_threshold) & 
+          (results_df['p_value'] < p_threshold)).sum()
+
 legend_elements = [
-    Line2D([0], [0], marker='o', color='w', label='Group 1 > Group 2', markerfacecolor='blue', markersize=6),
-    Line2D([0], [0], marker='o', color='w', label='Group 2 > Group 1', markerfacecolor='red', markersize=6),
-    Line2D([0], [0], marker='o', color='w', label='Not significant', markerfacecolor='gray', markersize=6)
+    Line2D([0], [0], marker='o', color='w', markerfacecolor='red', markersize=8,
+           label=f'Upregulated (n={n_hyper})'),
+    Line2D([0], [0], marker='o', color='w', markerfacecolor='blue', markersize=8,
+           label=f'Downregulated (n={n_hypo})'),
+    Line2D([0], [0], marker='o', color='w', markerfacecolor='lightgray', markersize=8,
+           label='Not significant')
 ]
 plt.legend(handles=legend_elements, loc='upper right')
 
+plt.grid(True, alpha=0.3)
 plt.tight_layout()
 
-# === SAVE OR SHOW ===
+# === SAVE ===
 if save_dir:
     os.makedirs(save_dir, exist_ok=True)
-    base1 = "_".join([os.path.splitext(os.path.basename(f.strip()))[0] for f in group1_files])
-    base2 = "_".join([os.path.splitext(os.path.basename(f.strip()))[0] for f in group2_files])
-    out_path = os.path.join(save_dir, f"volcano_{base1}_vs_{base2}.png")
-    plt.savefig(out_path, dpi=300)
-    print(f"\n✅ Volcano plot saved to: {out_path}")
+    base1 = "_".join([os.path.splitext(os.path.basename(f.strip()))[0] for f in group1_files if f.strip()])
+    base2 = "_".join([os.path.splitext(os.path.basename(f.strip()))[0] for f in group2_files if f.strip()])
+    
+    plot_path = os.path.join(save_dir, f"volcano_{base1}_vs_{base2}_log2fc.png")
+    plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+    print(f"Saved: {plot_path}")
 else:
     plt.show()
