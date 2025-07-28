@@ -3,7 +3,7 @@ import os
 import re
 
 # === USER INPUT FILES ===
-beta_file = "/Users/elliottseo/Documents/GitHub/methyl_data_pipeline/betas_combat_adjusted_final.csv"     # Replace with actual filename
+beta_file = "/Users/elliottseo/Documents/GitHub/methyl_data_pipeline/betas_combat_adjusted_top10k_cpgs_deseq2method.csv"     # Replace with actual filename
 sample_sheet_file = "/Users/elliottseo/Documents/GitHub/methyl_data_pipeline/data/samplesheet.csv" # Replace with actual filename
 
 # === Load data ===
