@@ -1,3 +1,10 @@
+'''
+Steps:
+1. Creates 7 folders for all experiments in source directory
+2. For each experiment, makes separate csv for each genotype
+'''
+
+
 import pandas as pd
 import os
 import re
