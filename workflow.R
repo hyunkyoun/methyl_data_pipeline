@@ -1,54 +1,50 @@
-# Methylation Data Analysis Pipeline (Improved)
-# IDAT -> QC -> BMIQ (per run) -> ComBat (across all runs) -> PCA
+# Methylation Data Analysis Pipeline (Clean)
+# IDAT -> QC -> ComBat -> PCA
 
 # ---- Setup 
-
 .libPaths("/Users/elliottseo/Documents/GitHub/methyl_data_pipeline/packages")
 setwd("/Users/elliottseo/Documents/GitHub/methyl_data_pipeline")
 
 required_libs <- c("sesame", "minfi", "IlluminaMouseMethylationmanifest", 
                    "IlluminaMouseMethylationanno.12.v1.mm10", "limma", "sva", 
                    "ggsci", "wateRmelon", "snow", "BiocParallel", "parallel", 
-                   "RColorBrewer", "readxl", "openxlsx", "ggplot2", "ComBatMet")
+                   "RColorBrewer", "readxl", "openxlsx", "ggplot2", "gridExtra", "pheatmap",
+                   "GenomicRanges", "GenomicFeatures", "BSgenome.Mmusculus.UCSC.mm10")
 lapply(required_libs, library, character.only = TRUE)
 
 source("bmiq/DoBMIQ.R")
 annoMouse <- getAnnotation(IlluminaMouseMethylationanno.12.v1.mm10)
 
-# ---- Step 1: Read idat files
-
+# ---- Step 1: Read IDAT files
 idir <- "idat"
 cores <- 4
 
+cat("Reading IDAT files...\n")
 betas <- openSesame(idir, BPPARAM = MulticoreParam(workers = cores), collapseToPfx = TRUE)
 detP <- openSesame(idir, func = pOOBAH, return.pval = TRUE, BPPARAM = MulticoreParam(workers = cores))
 detP <- betasCollapseToPfx(detP)
 
-targets <- read.csv("data/samplesheet.csv", header = TRUE)
-targets$Beadchip <- as.character(targets$Beadchip)
-targets$Basename <- paste0(targets$Beadchip, "_", targets$Position)
-targets$Samples <- paste0(targets$Sample.ID, "_", targets$Experiment)
-targets$EPIC_RUN_CLEAN <- targets$EPIC.Run
-targets <- targets[!duplicated(targets$Basename), ]
+# Align datasets
+common_samples <- intersect(colnames(betas), colnames(detP))
+betas <- betas[, common_samples]
+detP <- detP[, common_samples]
 
-common_samples <- intersect(targets$Basename, colnames(betas))
-targets <- targets[targets$Basename %in% common_samples, ]
-betas <- betas[, match(targets$Basename, colnames(betas))]
-detP <- detP[, match(targets$Basename, colnames(detP))]
+write.csv(betas, "betas_raw_idat.csv", row.names = TRUE)
+cat("Raw data saved:", nrow(betas), "probes x", ncol(betas), "samples\n")
 
-stopifnot(identical(targets$Basename, colnames(betas)))
+# ---- Step 2: Per-run QC filtering ----
+cat("Applying per-run QC filtering...\n")
 
-# ---- Step 2: Run by run Qc checks
-
+# Define QC filtering function per run
 qc_filter_run <- function(betas_run, detP_run, targets_run, run_id) {
-  good_samples <- which(colMeans(detP_run) < 0.05)
+  good_samples <- which(colMeans(detP_run, na.rm = TRUE) < 0.05)
   if (length(good_samples) == 0) stop(paste("No good samples in RUN", run_id))
 
   betas_run <- betas_run[, good_samples, drop = FALSE]
   detP_run <- detP_run[, good_samples, drop = FALSE]
-  targets_run <- targets_run[good_samples, ]
+  targets_run <- targets_run[good_samples, , drop = FALSE]
 
-  keep_probes <- rowSums(detP_run < 0.05) == ncol(betas_run)
+  keep_probes <- rowSums(detP_run < 0.05, na.rm = TRUE) == ncol(betas_run)
   betas_run <- betas_run[keep_probes, ]
   detP_run <- detP_run[keep_probes, ]
 
@@ -59,664 +55,514 @@ qc_filter_run <- function(betas_run, detP_run, targets_run, run_id) {
   cpg_idx <- grep("^cg", rownames(betas_run))
   betas_run <- betas_run[cpg_idx, ]
   sex_cpgs <- annoMouse$Name[annoMouse$chr %in% c("chrX", "chrY")]
-  betas_run <- betas_run[!rownames(betas_run) %in% sex_cpgs, ]
+  sex_cpgs_base <- sub("_.*$", "", sex_cpgs)
+  betas_run <- betas_run[!rownames(betas_run) %in% sex_cpgs_base, ]
   detP_run <- detP_run[rownames(betas_run), ]
 
   return(list(betas = betas_run, detP = detP_run, targets = targets_run))
 }
 
-unique_runs <- sort(unique(targets$EPIC_RUN_CLEAN))
+# Load targets and prepare for filtering
+targets_raw <- read.csv("data/samplesheet.csv", header = TRUE)
+names(targets_raw) <- make.names(names(targets_raw))
+targets_raw$Beadchip <- as.character(targets_raw$Beadchip)
+targets_raw$Basename <- paste0(targets_raw$Beadchip, "_", targets_raw$Position)
+targets_raw$Samples <- paste0(targets_raw$Sample.ID, "_", targets_raw$Experiment)
+targets_raw$EPIC_RUN_CLEAN <- targets_raw$EPIC.Run
+targets_raw <- targets_raw[!duplicated(targets_raw$Basename), ]
+
+# Match samples
+common_sample_ids <- intersect(colnames(betas), targets_raw$Basename)
+betas <- betas[, common_sample_ids]
+detP <- detP[, common_sample_ids]
+targets_matched <- targets_raw[match(common_sample_ids, targets_raw$Basename), ]
+
+# Apply QC filtering by run
 filtered_data <- list()
+unique_runs <- sort(unique(targets_matched$EPIC_RUN_CLEAN))
 
 for (run_id in unique_runs) {
-  idx <- targets$EPIC_RUN_CLEAN == run_id
-  result <- qc_filter_run(betas[, idx], detP[, idx], targets[idx, ], run_id)
+  run_idx <- targets_matched$EPIC_RUN_CLEAN == run_id
+  result <- qc_filter_run(betas[, run_idx, drop = FALSE],
+                          detP[, run_idx, drop = FALSE],
+                          targets_matched[run_idx, , drop = FALSE],
+                          run_id)
   filtered_data[[paste0("RUN_", gsub("_", "", run_id))]] <- result
 }
 
-# Combine betas after QC filtering (pre-BMIQ)
+# Find common CpGs across runs and merge
 common_cpgs_qc <- Reduce(intersect, lapply(filtered_data, function(x) rownames(x$betas)))
 betas_qc_combined <- do.call(cbind, lapply(filtered_data, function(x) x$betas[common_cpgs_qc, , drop = FALSE]))
-write.csv(betas_qc_combined, "betas_qc_combined.csv", row.names = TRUE)
+detP_qc_combined <- do.call(cbind, lapply(filtered_data, function(x) x$detP[common_cpgs_qc, , drop = FALSE]))
+targets_qc_combined <- do.call(rbind, lapply(filtered_data, function(x) x$targets))
 
-# ---- Step 3: Run by Run BMIQ checks
+# Save filtered data
+write.csv(betas_qc_combined, "betas_qc_filtered.csv", row.names = TRUE)
+cat("QC filtered data:", nrow(betas_qc_combined), "probes x", ncol(betas_qc_combined), "samples\n")
 
-run_bmiq_normalization <- function(betas_run, run_name) {
-  temp_file <- paste0("temp_betas_", run_name, ".csv")
-  write.csv(data.frame(CpG_ID = rownames(betas_run), betas_run), file = temp_file, row.names = FALSE)
+# Update global variables for consistency with later steps
+betas <- betas_qc_combined
+detP <- detP_qc_combined
+targets <- targets_qc_combined
 
-  tryCatch({
-    DoBMIQ(probes_path = "data/probesample.xlsx", beta_path = temp_file)
-    load("bmiq/results/bmiq.Rd")
-    return(bmiq.m)
-  }, error = function(e) {
-    stop(paste("BMIQ failed for", run_name, ":", e$message))
-  }, finally = {
-    if (file.exists(temp_file)) file.remove(temp_file)
-  })
-}
+# ---- Step 3: Match to samplesheet
+cat("Matching to samplesheet...\n")
 
-# combining BMIQ runs
+targets <- read.csv("data/samplesheet.csv", header = TRUE)
+names(targets) <- make.names(names(targets))
+targets$Beadchip <- as.character(targets$Beadchip)
+targets$Basename <- paste0(targets$Beadchip, "_", targets$Position)
+targets$Samples <- paste0(targets$Sample.ID, "_", targets$Experiment)
+targets$EPIC_RUN_CLEAN <- targets$EPIC.Run
+targets <- targets[!duplicated(targets$Basename), ]
 
-betas_bmiq_by_run <- lapply(names(filtered_data), function(run_name) {
-  run_bmiq_normalization(filtered_data[[run_name]]$betas, run_name)
-})
-names(betas_bmiq_by_run) <- names(filtered_data)
+# Match samples
+current_samples <- colnames(betas)
+matched_indices <- match(current_samples, targets$Basename)
+valid_matches <- !is.na(matched_indices)
 
-common_cpgs <- Reduce(intersect, lapply(betas_bmiq_by_run, rownames))
-betas_combined <- do.call(cbind, lapply(betas_bmiq_by_run, function(mat) mat[common_cpgs, , drop = FALSE]))
-write.csv(betas_combined, "betas_bmiq.csv", row.names = TRUE)
+matched_samples <- current_samples[valid_matches]
+betas <- betas[, matched_samples]
+detP <- detP[, matched_samples]
+targets <- targets[matched_indices[valid_matches], ]
+targets <- targets[match(colnames(betas), targets$Basename), ]
+
+# Rename to Sample IDs
+colnames(betas) <- targets$Samples
+targets$BATCH <- ifelse(targets$EPIC_RUN_CLEAN == "1_2", "BATCH1", "BATCH2")
+
+betas_combined <- betas
+matching_samples <- targets
+
+cat("Matched dataset:", nrow(betas_combined), "probes x", ncol(betas_combined), "samples\n")
 
 # ---- Step 4: ComBat normalization
+use_tissue_design <- length(unique(targets$Tissue.Cell.type)) >= 2
+skip_combat <- length(unique(targets$BATCH)) < 2
 
-betas_colnames_clean <- gsub("^X", "", colnames(betas_combined))
-matching_samples <- targets[match(betas_colnames_clean, targets$Basename), ]
-matching_samples <- matching_samples[!is.na(matching_samples$Basename), ]
-betas_combined <- betas_combined[, !is.na(targets[match(betas_colnames_clean, targets$Basename), ]$Basename)]
-colnames(betas_combined) <- matching_samples$Samples
-
-missing_samples <- colSums(is.na(betas_combined)) > 0
-missing_probes <- rowSums(is.na(betas_combined)) > 0
-if (any(missing_samples)) {
-  betas_combined <- betas_combined[, !missing_samples]
-  matching_samples <- matching_samples[!missing_samples, ]
+if (skip_combat) {
+  cat("Skipping ComBat (single batch)\n")
+  betas_adjusted <- betas_combined
+} else {
+  cat("Running ComBat normalization...\n")
+  
+  # Convert to M-values
+  mvals_combined <- log2(betas_combined / (1 - betas_combined))
+  mvals_combined[is.infinite(mvals_combined)] <- NA
+  mvals_combined <- mvals_combined[complete.cases(mvals_combined), ]
+  
+  # Design matrix
+  if (use_tissue_design) {
+    mod <- model.matrix(~as.factor(Tissue.Cell.type), data=matching_samples)
+  } else {
+    mod <- model.matrix(~1, data=matching_samples)
+  }
+  
+  # Run ComBat
+  mvals_combat <- ComBat(
+    dat = mvals_combined,
+    batch = as.numeric(factor(matching_samples$BATCH)),
+    mod = mod,
+    par.prior = TRUE,
+    prior.plots = FALSE
+  )
+  
+  # Convert back to beta values
+  betas_adjusted <- 2^mvals_combat / (1 + 2^mvals_combat)
+  betas_adjusted[betas_adjusted < 0] <- 0
+  betas_adjusted[betas_adjusted > 1] <- 1
 }
-if (any(missing_probes)) {
-  betas_combined <- betas_combined[!missing_probes, ]
-}
 
-matching_samples$BATCH <- ifelse(matching_samples$EPIC_RUN_CLEAN == "1_2", "BATCH1", "BATCH2")
-batch_vector <- factor(matching_samples$BATCH)
-group_vector <- factor(matching_samples$Tissue.Cell.type)
-
-mod <- model.matrix(~as.factor(Tissue.Cell.type), data=matching_samples)
-stopifnot(identical(colnames(betas_combined), matching_samples$Samples))
-
-mvals_adjusted <- log2(betas_combined / (1 - betas_combined))
-mvals_adjusted[is.infinite(mvals_adjusted)] <- NA
-mvals_adjusted <- mvals_adjusted[complete.cases(mvals_adjusted), ]
-
-mvals_combat <- ComBat(
-  dat = mvals_adjusted,
-  batch = as.numeric(batch_vector),
-  mod = mod,
-  par.prior = TRUE,
-  prior.plots = FALSE
-)
-
-betas_adjusted <- 2^mvals_combat / (1 + 2^mvals_combat)
-betas_adjusted[betas_adjusted < 0] <- 0
-betas_adjusted[betas_adjusted > 1] <- 1
 write.csv(betas_adjusted, "betas_combat_adjusted.csv", row.names = TRUE)
+cat("Final dataset:", nrow(betas_adjusted), "probes x", ncol(betas_adjusted), "samples\n")
 
-# ---- Step 5: Choosing top 10k CpGs
+# ---- Step 5 + Step 6: Extract top variable CpGs & Generate PCA plots 
+create_simple_pca <- function(betas_data, targets_data, ntop = 100, output_prefix) {
+  cat("Processing", output_prefix, "data...\n")
+  
+  # Transpose to match Python: rows = samples, columns = CpGs
+  df_T <- t(betas_data)
+  
+  # Select top N most variable CpGs 
+  cpg_variances <- apply(betas_data, 1, var, na.rm = TRUE)
+  top_cpgs <- names(sort(cpg_variances, decreasing = TRUE)[1:ntop])
+  df_T_reduced <- df_T[, top_cpgs]
+  
+  cat("Selected top", ntop, "CpGs based on variance\n")
+  
+  # Ensure sample alignment with targets
+  df_T_reduced <- df_T_reduced[match(targets_data$Samples, rownames(df_T_reduced)), ]
+  rownames(df_T_reduced) <- targets_data$Samples
+  
+  # Double-check alignment
+  stopifnot(all(rownames(df_T_reduced) == targets_data$Samples))
+  
+  # Standardize (center and scale)
+  scaled_data <- scale(df_T_reduced, center = TRUE, scale = TRUE)
+  
+  # Handle any NaN/Inf values
+  scaled_data[is.na(scaled_data)] <- 0
+  scaled_data[is.infinite(scaled_data)] <- 0
+  
+  # Run PCA
+  pca <- prcomp(scaled_data, center = FALSE, scale. = FALSE)  
+  
+  # Create PCA dataframe with metadata
+  pca_df <- data.frame(
+    PC1 = pca$x[, 1],
+    PC2 = pca$x[, 2],
+    Sample = rownames(pca$x)
+  )
+  pca_df <- cbind(pca_df, targets_data)
+  
+  # Calculate variance explained percentages
+  var_explained <- summary(pca)$importance[2, ] * 100
+  pc1_var <- round(var_explained[1], 2)
+  pc2_var <- round(var_explained[2], 2)
+  
+  # Helper function to create individual plots
+  create_plot <- function(color_var, color_palette, label) {
+    ggplot(pca_df, aes_string(x = "PC1", y = "PC2", color = color_var)) +
+      geom_point(size = 2.5, alpha = 0.7) +
+      scale_color_manual(values = color_palette) +
+      theme_minimal() +
+      theme(
+        panel.grid = element_line(color = "grey90"),
+        plot.title = element_text(size = 14, hjust = 0.5)
+      ) +
+      labs(
+        title = paste("PCA of Top", ntop, "CpGs - PC1 vs PC2 by", label),
+        x = paste0("PC1 (", pc1_var, "%)"),
+        y = paste0("PC2 (", pc2_var, "%)")
+      )
+  }
+  
+  # Batch colors
+  batch_colors <- c("red", "blue")[1:length(unique(pca_df$BATCH))]
+  names(batch_colors) <- unique(pca_df$BATCH)
+  
+  p_batch <- create_plot("BATCH", batch_colors, "Batch")
+  ggsave(paste0(output_prefix, "_PCA_Batch_PC1_PC2.pdf"), p_batch, width = 8, height = 6)
+  
+  # Tissue colors
+  tissue_levels <- unique(pca_df$Tissue.Cell.type)
+  tissue_colors <- rainbow(length(tissue_levels))
+  names(tissue_colors) <- tissue_levels
+  
+  p_tissue <- create_plot("Tissue.Cell.type", tissue_colors, "Tissue")
+  ggsave(paste0(output_prefix, "_PCA_Tissue_PC1_PC2.pdf"), p_tissue, width = 8, height = 6)
+  
+  # Genotype colors 
+  genotype_levels <- unique(pca_df$True.Genotype)
+  genotype_colors <- c("green", "orange", "purple", "red", "blue", "brown", 
+                      "pink", "gray", "cyan", "magenta", "yellow", "black")[1:length(genotype_levels)]
+  names(genotype_colors) <- genotype_levels
+  
+  p_genotype <- create_plot("True.Genotype", genotype_colors, "Genotype")
+  ggsave(paste0(output_prefix, "_PCA_Genotype_PC1_PC2.pdf"), p_genotype, width = 8, height = 6)
+  
+  # Print summary info
+  cat("PC1 explains", pc1_var, "% of variance\n")
+  cat("PC2 explains", pc2_var, "% of variance\n")
+  cat("Total variance explained:", round(sum(var_explained[1:2]), 2), "%\n")
+  
+  # Save the filtered beta values for the top CpGs
+  betas_top <- betas_data[top_cpgs, ]
+  write.csv(betas_top, paste0(output_prefix, "_betas_top", ntop, "_cpgs.csv"), row.names = TRUE)
+  cat("Saved filtered beta values:", nrow(betas_top), "CpGs x", ncol(betas_top), "samples\n")
+  
+  write.csv(data.frame(CpG = top_cpgs, Variance = cpg_variances[top_cpgs]), 
+            paste0(output_prefix, "_top", ntop, "_cpgs_simple.csv"), row.names = FALSE)
+  
+  return(list(
+    pca_df = pca_df, 
+    pca = pca, 
+    top_cpgs = top_cpgs,
+    betas_top = betas_top  
+  ))
+}
 
-# Combat
-cpg_variances <- apply(mvals_combat, 1, var, na.rm = TRUE)
-ntop <- 10000
-select_var <- order(cpg_variances, decreasing = TRUE)[seq_len(min(ntop, length(cpg_variances)))]
-top_10k_cpgs <- rownames(mvals_combat)[select_var]
+# Now run the analysis and capture betas_top
+cat("Running PCA analysis and extracting top CpGs...\n")
 
-betas_top10k <- betas_adjusted[top_10k_cpgs, ]
-mvals_top10k <- mvals_combat[top_10k_cpgs, ]
+# For ComBat adjusted data  
+combat_result <- create_simple_pca(betas_adjusted, matching_samples, 10000, "COMBAT_ADJUSTED")
 
-write.csv(betas_top10k, "betas_combat_adjusted_top10k_cpgs_deseq2method.csv")
-write.csv(mvals_top10k, "mvals_combat_adjusted_top10k_cpgs_deseq2method.csv")
+# Extract betas_top from the results
+betas_top_combat <- combat_result$betas_top
+cat("Extracted betas_top with dimensions:", nrow(betas_top_combat), "x", ncol(betas_top_combat), "\n")
 
-# BMIQ 
-mvals_bmiq <- log2(betas_combined / (1 - betas_combined))
-mvals_bmiq[is.infinite(mvals_bmiq)] <- NA
+# ---- Step 7: Analysis Heatmaps + Volcano with Mode and Group Control ----
 
-cpg_variances_bmiq <- apply(mvals_bmiq, 1, var, na.rm = TRUE)
-ntop <- 10000
-select_var_bmiq <- order(cpg_variances_bmiq, decreasing = TRUE)[seq_len(min(ntop, length(cpg_variances_bmiq)))]
-top_10k_cpgs_bmiq <- rownames(betas_combined)[select_var_bmiq]
+plot_mode <- "both"  # Options: "both", "volcano", "heatmap"
 
-betas_top10k_bmiq <- betas_combined[top_10k_cpgs_bmiq, ]
-mvals_top10k_bmiq <- mvals_bmiq[top_10k_cpgs_bmiq, ]
-
-write.csv(betas_top10k_bmiq, "betas_BMIQ_adjusted_top10k_cpgs_deseq2method.csv")
-write.csv(mvals_top10k_bmiq, "mvals_BMIQ_adjusted_top10k_cpgs_deseq2method.csv")
-
-# Raw
-mvals_qc <- log2(betas_qc_combined / (1 - betas_qc_combined))
-mvals_qc[is.infinite(mvals_qc)] <- NA
-
-cpg_variances_qc <- apply(mvals_qc, 1, var, na.rm = TRUE)
-ntop <- 10000
-select_var_qc <- order(cpg_variances_qc, decreasing = TRUE)[seq_len(min(ntop, length(cpg_variances_qc)))]
-top_10k_cpgs_qc <- rownames(betas_qc_combined)[select_var_qc]
-
-betas_top10k_qc <- betas_qc_combined[top_10k_cpgs_qc, ]
-mvals_top10k_qc <- mvals_qc[top_10k_cpgs_qc, ]
-
-write.csv(betas_top10k_qc, "betas_QC_adjusted_top10k_cpgs_deseq2method.csv")
-write.csv(mvals_top10k_qc, "mvals_QC_adjusted_top10k_cpgs_deseq2method.csv")
-
-# ---- Step 6: PCA analysis (top 10k CpGs)
-
-print("=== STEP 5A: PCA analysis (using top 10k CpGs - DESeq2 method) ===")
-
-# Use M-values for PCA (already calculated above)
-betas_for_pca <- betas_top10k
-mvals_for_pca <- mvals_top10k
-group_for_pca <- group_vector
-batch_for_pca <- batch_vector
-
-print("Debugging PCA setup...")
-print(paste("Samples in data:", ncol(betas_for_pca)))
-print(paste("CpGs in data:", nrow(betas_for_pca)))
-print(paste("Length of group_for_pca:", length(group_for_pca)))
-print(paste("Length of batch_for_pca:", length(batch_for_pca)))
-
-print("Sample names in data (first 5):")
-print(head(colnames(betas_for_pca), 5))
-print("Group vector (first 5):")
-print(head(as.character(group_for_pca), 5))
-
-# Perform PCA on M-values (centered, not scaled - DESeq2 default)
-pca_result <- prcomp(t(mvals_for_pca), center = TRUE, scale. = FALSE)
-
-print("PCA completed successfully!")
-print(paste("PCA sample names (first 5):"))
-print(head(rownames(pca_result$x), 5))
-
-# Create additional grouping vectors for PCA
-genotype_for_pca <- factor(matching_samples$True.Genotype)
-cross_type_for_pca <- factor(matching_samples$cross.type)
-
-# Create PCA dataframe with proper alignment
-pca_df_top10k <- data.frame(
-  PC1 = pca_result$x[, 1],
-  PC2 = pca_result$x[, 2],
-  Sample = rownames(pca_result$x),
-  Tissue_Cell_Type = group_for_pca[match(rownames(pca_result$x), colnames(betas_for_pca))],
-  Batch = batch_for_pca[match(rownames(pca_result$x), colnames(betas_for_pca))],
-  Genotype = genotype_for_pca[match(rownames(pca_result$x), colnames(betas_for_pca))],
-  Cross_Type = cross_type_for_pca[match(rownames(pca_result$x), colnames(betas_for_pca))]
+# Define sample groups for each contrast (for heatmaps)
+heatmap_group_map <- list(
+  dp10_vs_WT_thymus1 = c("groupdp10_thymus_dp10", "groupdouble_thymus_dp10", "groupdp10_thymus_wt", "groupdouble_thymus_wt", "groupdp16_thymus_wt"),
+  dp16_vs_WT_thymus1 = c("groupdp16_thymus_dp16", "groupdouble_thymus_dp16", "groupdp10_thymus_wt", "groupdouble_thymus_wt", "groupdp16_thymus_wt"),
+  dp16_dp10_vs_WT_thymus1 = c("groupdouble_thymus_dp10_dp16", "groupdp10_thymus_wt", "groupdouble_thymus_wt", "groupdp16_thymus_wt"),
+  dp10_vs_WT_tcells2 = c("groupdp10_tcells_dp10", "groupdouble_tcells_dp10", "groupdp10_tcells_wt", "groupdouble_tcells_wt", "groupdp16_tcells_wt"),
+  dp16_vs_WT_tcells2 = c("groupdp16_tcells_dp16", "groupdouble_tcells_dp16", "groupdp10_tcells_wt", "groupdouble_tcells_wt", "groupdp16_tcells_wt"),
+  dp16_dp10_vs_WT_tcells2 = c("groupdouble_tcells_dp10_dp16", "groupdp10_tcells_wt", "groupdouble_tcells_wt", "groupdp16_tcells_wt"),
+  dp16_vs_WT_thymus3 = c("grouprunx_thymus_dp16", "grouprunx_thymus_wt"),
+  runx1_dp16_vs_WT_thymus3 = c("grouprunx_thymus_2copy", "grouprunx_thymus_wt"),
+  runx1_vs_WT_thymus3 = c("grouprunx_thymus_1copy", "grouprunx_thymus_wt"),
+  runx1_dp16_vs_WT_thymocytes4 = c("grouprunx_thymocytes_2copy", "grouprunx_thymocytes_wt"),
+  runx1_vs_WT_thymocytes4 = c("grouprunx_thymocytes_1copy", "grouprunx_thymocytes_wt"),
+  dp16_vs_WT_thymocytes4 = c("grouprunx_thymocytes_dp16", "grouprunx_thymocytes_wt"),
+  Ts65Dn_vs_WT_thymocytes5 = c("groupTs65Dn", "groupwt_for_Ts65Dn"),
+  dp10_vs_WT_thymus7 = c("groupdp10_tcells_dp10_5", "groupdouble_tcells_dp10_5", "groupdp10_tcells_wt_5", "groupdouble_tcells_wt_5", "groupdp16_tcells_wt_5"),
+  dp16_vs_WT_thymus7 = c("groupdp16_tcells_dp16_5", "groupdouble_tcells_dp16_5", "groupdp10_tcells_wt_5", "groupdouble_tcells_wt_5", "groupdp16_tcells_wt_5"),
+  dp16_dp10_vs_WT_thymus7 = c("groupdouble_tcells_dp10_dp16_5", "groupdp10_tcells_wt_5", "groupdouble_tcells_wt_5", "groupdp16_tcells_wt_5")
 )
 
-# Check for NAs in the PCA dataframe
-print("Checking PCA dataframe:")
-print(paste("Rows in pca_df:", nrow(pca_df_top10k)))
-print(paste("NAs in Tissue_Cell_Type:", sum(is.na(pca_df_top10k$Tissue_Cell_Type))))
-print(paste("NAs in Batch:", sum(is.na(pca_df_top10k$Batch))))
-print(paste("NAs in Genotype:", sum(is.na(pca_df_top10k$Genotype))))
-print(paste("NAs in Cross_Type:", sum(is.na(pca_df_top10k$Cross_Type))))
-
-# Plot by tissue cell type
-pdf("PCA_Combat_adjusted_tissue_type_top10k_deseq2.pdf", width = 10, height = 8)
-p1 <- ggplot(pca_df_top10k, aes(x = PC1, y = PC2, color = Tissue_Cell_Type)) +
-  geom_point(size = 3, alpha = 0.7) +
-  stat_ellipse(level = 0.95) +
-  labs(
-    title = "PCA on ComBat Adjusted M-values (by Tissue Cell Type) - Top 10k CpGs (DESeq2 method)",
-    x = paste0("PC1 (", round(summary(pca_result)$importance[2, 1] * 100, 1), "%)"),
-    y = paste0("PC2 (", round(summary(pca_result)$importance[2, 2] * 100, 1), "%)")
-  ) +
-  theme_minimal() +
-  theme(legend.position = "bottom")
-print(p1)
-dev.off()
-
-# Plot by batch
-pdf("PCA_Combat_adjusted_batch_top10k_deseq2.pdf", width = 10, height = 8)
-p2 <- ggplot(pca_df_top10k, aes(x = PC1, y = PC2, color = Batch)) +
-  geom_point(size = 3, alpha = 0.7) +
-  stat_ellipse(level = 0.95) +
-  labs(
-    title = "PCA on ComBat Adjusted M-values (by Batch) - Top 10k CpGs (DESeq2 method)",
-    x = paste0("PC1 (", round(summary(pca_result)$importance[2, 1] * 100, 1), "%)"),
-    y = paste0("PC2 (", round(summary(pca_result)$importance[2, 2] * 100, 1), "%)")
-  ) +
-  theme_minimal() +
-  theme(legend.position = "bottom")
-print(p2)
-dev.off()
-
-# Plot by genotype
-pdf("PCA_Combat_adjusted_genotype_top10k_deseq2.pdf", width = 10, height = 8)
-p3 <- ggplot(pca_df_top10k, aes(x = PC1, y = PC2, color = Genotype)) +
-  geom_point(size = 3, alpha = 0.7) +
-  labs(
-    title = "PCA on ComBat Adjusted M-values (by Genotype) - Top 10k CpGs (DESeq2 method)",
-    x = paste0("PC1 (", round(summary(pca_result)$importance[2, 1] * 100, 1), "%)"),
-    y = paste0("PC2 (", round(summary(pca_result)$importance[2, 2] * 100, 1), "%)")
-  ) +
-  theme_minimal() +
-  theme(legend.position = "bottom")
-print(p3)
-dev.off()
-
-# Plot by cross type
-pdf("PCA_Combat_adjusted_cross_type_top10k_deseq2.pdf", width = 10, height = 8)
-p4 <- ggplot(pca_df_top10k, aes(x = PC1, y = PC2, color = Cross_Type)) +
-  geom_point(size = 3, alpha = 0.7) +
-  labs(
-    title = "PCA on ComBat Adjusted M-values (by Cross Type) - Top 10k CpGs (DESeq2 method)",
-    x = paste0("PC1 (", round(summary(pca_result)$importance[2, 1] * 100, 1), "%)"),
-    y = paste0("PC2 (", round(summary(pca_result)$importance[2, 2] * 100, 1), "%)")
-  ) +
-  theme_minimal() +
-  theme(legend.position = "bottom")
-print(p4)
-dev.off()
-
-print("PCA plots (Top 10k CpGs - DESeq2 method) saved successfully!")
-
-# ---- Step 5B: PCA analysis (All CpGs)
-
-print("=== STEP 5B: PCA analysis (using ALL CpGs) ===")
-
-# Use ALL CpGs for PCA comparison
-betas_all_cpgs <- betas_adjusted
-mvals_all_cpgs <- log2(betas_all_cpgs / (1 - betas_all_cpgs))
-
-print("Debugging PCA setup for ALL CpGs...")
-print(paste("Samples in ALL CpG data:", ncol(betas_all_cpgs)))
-print(paste("CpGs in ALL CpG data:", nrow(betas_all_cpgs)))
-
-# Perform PCA on M-values using ALL CpGs
-print("Performing PCA on ALL CpGs...")
-pca_result_all <- prcomp(t(mvals_all_cpgs), center = TRUE, scale. = FALSE)
-
-print("PCA on ALL CpGs completed successfully!")
-
-# Create PCA dataframe for ALL CpGs
-pca_df_all_cpgs <- data.frame(
-  PC1 = pca_result_all$x[, 1],
-  PC2 = pca_result_all$x[, 2],
-  Sample = rownames(pca_result_all$x),
-  Tissue_Cell_Type = group_for_pca[match(rownames(pca_result_all$x), colnames(betas_all_cpgs))],
-  Batch = batch_for_pca[match(rownames(pca_result_all$x), colnames(betas_all_cpgs))],
-  Genotype = genotype_for_pca[match(rownames(pca_result_all$x), colnames(betas_all_cpgs))],
-  Cross_Type = cross_type_for_pca[match(rownames(pca_result_all$x), colnames(betas_all_cpgs))]
+# Define group mapping for each contrast (experimental vs control groups)
+group_labels_map <- list(
+  dp10_vs_WT_thymus1 = list(
+    experimental = c("groupdp10_thymus_dp10", "groupdouble_thymus_dp10"),
+    control = c("groupdp10_thymus_wt", "groupdouble_thymus_wt", "groupdp16_thymus_wt"),
+    exp_label = "dp10", ctrl_label = "WT"
+  ),
+  dp16_vs_WT_thymus1 = list(
+    experimental = c("groupdp16_thymus_dp16", "groupdouble_thymus_dp16"),
+    control = c("groupdp10_thymus_wt", "groupdouble_thymus_wt", "groupdp16_thymus_wt"),
+    exp_label = "dp16", ctrl_label = "WT"
+  ),
+  dp16_dp10_vs_WT_thymus1 = list(
+    experimental = c("groupdouble_thymus_dp10_dp16"),
+    control = c("groupdp10_thymus_wt", "groupdouble_thymus_wt", "groupdp16_thymus_wt"),
+    exp_label = "dp16_dp10", ctrl_label = "WT"
+  ),
+  dp10_vs_WT_tcells2 = list(
+    experimental = c("groupdp10_tcells_dp10", "groupdouble_tcells_dp10"),
+    control = c("groupdp10_tcells_wt", "groupdouble_tcells_wt", "groupdp16_tcells_wt"),
+    exp_label = "dp10", ctrl_label = "WT"
+  ),
+  dp16_vs_WT_tcells2 = list(
+    experimental = c("groupdp16_tcells_dp16", "groupdouble_tcells_dp16"),
+    control = c("groupdp10_tcells_wt", "groupdouble_tcells_wt", "groupdp16_tcells_wt"),
+    exp_label = "dp16", ctrl_label = "WT"
+  ),
+  dp16_dp10_vs_WT_tcells2 = list(
+    experimental = c("groupdouble_tcells_dp10_dp16"),
+    control = c("groupdp10_tcells_wt", "groupdouble_tcells_wt", "groupdp16_tcells_wt"),
+    exp_label = "dp16_dp10", ctrl_label = "WT"
+  ),
+  dp16_vs_WT_thymus3 = list(
+    experimental = c("grouprunx_thymus_dp16"),
+    control = c("grouprunx_thymus_wt"),
+    exp_label = "dp16", ctrl_label = "WT"
+  ),
+  runx1_dp16_vs_WT_thymus3 = list(
+    experimental = c("grouprunx_thymus_2copy"),
+    control = c("grouprunx_thymus_wt"),
+    exp_label = "runx1_dp16", ctrl_label = "WT"
+  ),
+  runx1_vs_WT_thymus3 = list(
+    experimental = c("grouprunx_thymus_1copy"),
+    control = c("grouprunx_thymus_wt"),
+    exp_label = "runx1", ctrl_label = "WT"
+  ),
+  runx1_dp16_vs_WT_thymocytes4 = list(
+    experimental = c("grouprunx_thymocytes_2copy"),
+    control = c("grouprunx_thymocytes_wt"),
+    exp_label = "runx1_dp16", ctrl_label = "WT"
+  ),
+  runx1_vs_WT_thymocytes4 = list(
+    experimental = c("grouprunx_thymocytes_1copy"),
+    control = c("grouprunx_thymocytes_wt"),
+    exp_label = "runx1", ctrl_label = "WT"
+  ),
+  dp16_vs_WT_thymocytes4 = list(
+    experimental = c("grouprunx_thymocytes_dp16"),
+    control = c("grouprunx_thymocytes_wt"),
+    exp_label = "dp16", ctrl_label = "WT"
+  ),
+  Ts65Dn_vs_WT_thymocytes5 = list(
+    experimental = c("groupTs65Dn"),
+    control = c("groupwt_for_Ts65Dn"),
+    exp_label = "Ts65Dn", ctrl_label = "WT"
+  ),
+  dp10_vs_WT_thymus7 = list(
+    experimental = c("groupdp10_tcells_dp10_5", "groupdouble_tcells_dp10_5"),
+    control = c("groupdp10_tcells_wt_5", "groupdouble_tcells_wt_5", "groupdp16_tcells_wt_5"),
+    exp_label = "dp10", ctrl_label = "WT"
+  ),
+  dp16_vs_WT_thymus7 = list(
+    experimental = c("groupdp16_tcells_dp16_5", "groupdouble_tcells_dp16_5"),
+    control = c("groupdp10_tcells_wt_5", "groupdouble_tcells_wt_5", "groupdp16_tcells_wt_5"),
+    exp_label = "dp16", ctrl_label = "WT"
+  ),
+  dp16_dp10_vs_WT_thymus7 = list(
+    experimental = c("groupdouble_tcells_dp10_dp16_5"),
+    control = c("groupdp10_tcells_wt_5", "groupdouble_tcells_wt_5", "groupdp16_tcells_wt_5"),
+    exp_label = "dp16_dp10", ctrl_label = "WT"
+  )
 )
 
-# Plot by tissue cell type (ALL CpGs)
-pdf("PCA_Combat_adjusted_tissue_type_ALL_cpgs.pdf", width = 10, height = 8)
-p5 <- ggplot(pca_df_all_cpgs, aes(x = PC1, y = PC2, color = Tissue_Cell_Type)) +
-  geom_point(size = 3, alpha = 0.7) +
-  stat_ellipse(level = 0.95) +
-  labs(
-    title = "PCA on ComBat Adjusted M-values (by Tissue Cell Type) - ALL CpGs",
-    x = paste0("PC1 (", round(summary(pca_result_all)$importance[2, 1] * 100, 1), "%)"),
-    y = paste0("PC2 (", round(summary(pca_result_all)$importance[2, 2] * 100, 1), "%)")
-  ) +
-  theme_minimal() +
-  theme(legend.position = "bottom")
-print(p5)
-dev.off()
+betas <- betas_top_combat
+targets <- matching_samples
 
-# Plot by batch (ALL CpGs)
-pdf("PCA_Combat_adjusted_batch_ALL_cpgs.pdf", width = 10, height = 8)
-p6 <- ggplot(pca_df_all_cpgs, aes(x = PC1, y = PC2, color = Batch)) +
-  geom_point(size = 3, alpha = 0.7) +
-  stat_ellipse(level = 0.95) +
-  labs(
-    title = "PCA on ComBat Adjusted M-values (by Batch) - ALL CpGs",
-    x = paste0("PC1 (", round(summary(pca_result_all)$importance[2, 1] * 100, 1), "%)"),
-    y = paste0("PC2 (", round(summary(pca_result_all)$importance[2, 2] * 100, 1), "%)")
-  ) +
-  theme_minimal() +
-  theme(legend.position = "bottom")
-print(p6)
-dev.off()
-
-# Plot by genotype (ALL CpGs)
-pdf("PCA_Combat_adjusted_genotype_ALL_cpgs.pdf", width = 10, height = 8)
-p7 <- ggplot(pca_df_all_cpgs, aes(x = PC1, y = PC2, color = Genotype)) +
-  geom_point(size = 3, alpha = 0.7) +
-  labs(
-    title = "PCA on ComBat Adjusted M-values (by Genotype) - ALL CpGs",
-    x = paste0("PC1 (", round(summary(pca_result_all)$importance[2, 1] * 100, 1), "%)"),
-    y = paste0("PC2 (", round(summary(pca_result_all)$importance[2, 2] * 100, 1), "%)")
-  ) +
-  theme_minimal() +
-  theme(legend.position = "bottom")
-print(p7)
-dev.off()
-
-# Plot by cross type (ALL CpGs)
-pdf("PCA_Combat_adjusted_cross_type_ALL_cpgs.pdf", width = 10, height = 8)
-p8 <- ggplot(pca_df_all_cpgs, aes(x = PC1, y = PC2, color = Cross_Type)) +
-  geom_point(size = 3, alpha = 0.7) +
-  labs(
-    title = "PCA on ComBat Adjusted M-values (by Cross Type) - ALL CpGs",
-    x = paste0("PC1 (", round(summary(pca_result_all)$importance[2, 1] * 100, 1), "%)"),
-    y = paste0("PC2 (", round(summary(pca_result_all)$importance[2, 2] * 100, 1), "%)")
-  ) +
-  theme_minimal() +
-  theme(legend.position = "bottom")
-print(p8)
-dev.off()
-
-print("PCA plots (ALL CpGs) saved successfully!")
-
-# ---- Step 5C: PCA analysis (top 10k for BMIQ + Qc (Raw data))
-
-print("=== PCA analysis (using top 10k CpGs - BMIQ data) ===")
-
-# Use M-values for PCA (already calculated above)
-betas_for_pca_bmiq <- betas_top10k_bmiq
-mvals_for_pca_bmiq <- mvals_top10k_bmiq
-group_for_pca_bmiq <- group_vector
-batch_for_pca_bmiq <- batch_vector
-
-print("Debugging PCA setup for BMIQ...")
-print(paste("Samples in data:", ncol(betas_for_pca_bmiq)))
-print(paste("CpGs in data:", nrow(betas_for_pca_bmiq)))
-print(paste("Length of group_for_pca:", length(group_for_pca_bmiq)))
-print(paste("Length of batch_for_pca:", length(batch_for_pca_bmiq)))
-
-print("Sample names in data (first 5):")
-print(head(colnames(betas_for_pca_bmiq), 5))
-print("Group vector (first 5):")
-print(head(as.character(group_for_pca_bmiq), 5))
-
-# Perform PCA on M-values (centered, not scaled - DESeq2 default)
-pca_result_bmiq <- prcomp(t(mvals_for_pca_bmiq), center = TRUE, scale. = FALSE)
-
-print("PCA completed successfully for BMIQ!")
-print(paste("PCA sample names (first 5):"))
-print(head(rownames(pca_result_bmiq$x), 5))
-
-# Create additional grouping vectors for PCA
-genotype_for_pca_bmiq <- factor(matching_samples$True.Genotype)
-cross_type_for_pca_bmiq <- factor(matching_samples$cross.type)
-
-# Create PCA dataframe with proper alignment
-pca_df_top10k_bmiq <- data.frame(
-  PC1 = pca_result_bmiq$x[, 1],
-  PC2 = pca_result_bmiq$x[, 2],
-  Sample = rownames(pca_result_bmiq$x),
-  Tissue_Cell_Type = group_for_pca_bmiq[match(rownames(pca_result_bmiq$x), colnames(betas_for_pca_bmiq))],
-  Batch = batch_for_pca_bmiq[match(rownames(pca_result_bmiq$x), colnames(betas_for_pca_bmiq))],
-  Genotype = genotype_for_pca_bmiq[match(rownames(pca_result_bmiq$x), colnames(betas_for_pca_bmiq))],
-  Cross_Type = cross_type_for_pca_bmiq[match(rownames(pca_result_bmiq$x), colnames(betas_for_pca_bmiq))]
+contrast_names <- c(
+  "dp10_vs_WT_thymus1", "dp16_vs_WT_thymus1", "dp16_dp10_vs_WT_thymus1",
+  "dp10_vs_WT_tcells2", "dp16_vs_WT_tcells2", "dp16_dp10_vs_WT_tcells2",
+  "dp16_vs_WT_thymus3", "runx1_dp16_vs_WT_thymus3", "runx1_vs_WT_thymus3",
+  "runx1_dp16_vs_WT_thymocytes4", "runx1_vs_WT_thymocytes4", "dp16_vs_WT_thymocytes4",
+  "Ts65Dn_vs_WT_thymocytes5", "dp10_vs_WT_thymus7", "dp16_vs_WT_thymus7", "dp16_dp10_vs_WT_thymus7"
 )
 
-# Check for NAs in the PCA dataframe
-print("Checking PCA dataframe for BMIQ:")
-print(paste("Rows in pca_df:", nrow(pca_df_top10k_bmiq)))
-print(paste("NAs in Tissue_Cell_Type:", sum(is.na(pca_df_top10k_bmiq$Tissue_Cell_Type))))
-print(paste("NAs in Batch:", sum(is.na(pca_df_top10k_bmiq$Batch))))
-print(paste("NAs in Genotype:", sum(is.na(pca_df_top10k_bmiq$Genotype))))
-print(paste("NAs in Cross_Type:", sum(is.na(pca_df_top10k_bmiq$Cross_Type))))
-
-# Plot by tissue cell type
-pdf("PCA_BMIQ_tissue_type_top10k.pdf", width = 10, height = 8)
-p1_bmiq <- ggplot(pca_df_top10k_bmiq, aes(x = PC1, y = PC2, color = Tissue_Cell_Type)) +
-  geom_point(size = 3, alpha = 0.7) +
-  stat_ellipse(level = 0.95) +
-  labs(
-    title = "PCA on BMIQ Normalized M-values (by Tissue Cell Type) - Top 10k CpGs",
-    x = paste0("PC1 (", round(summary(pca_result_bmiq)$importance[2, 1] * 100, 1), "%)"),
-    y = paste0("PC2 (", round(summary(pca_result_bmiq)$importance[2, 2] * 100, 1), "%)")
-  ) +
-  theme_minimal() +
-  theme(legend.position = "bottom")
-print(p1_bmiq)
-dev.off()
-
-# Plot by batch
-pdf("PCA_BMIQ_batch_top10k.pdf", width = 10, height = 8)
-p2_bmiq <- ggplot(pca_df_top10k_bmiq, aes(x = PC1, y = PC2, color = Batch)) +
-  geom_point(size = 3, alpha = 0.7) +
-  stat_ellipse(level = 0.95) +
-  labs(
-    title = "PCA on BMIQ Normalized M-values (by Batch) - Top 10k CpGs",
-    x = paste0("PC1 (", round(summary(pca_result_bmiq)$importance[2, 1] * 100, 1), "%)"),
-    y = paste0("PC2 (", round(summary(pca_result_bmiq)$importance[2, 2] * 100, 1), "%)")
-  ) +
-  theme_minimal() +
-  theme(legend.position = "bottom")
-print(p2_bmiq)
-dev.off()
-
-print("PCA plots (Top 10k CpGs - BMIQ data) saved successfully!")
-
-print("=== PCA analysis (using top 10k CpGs - QC data) ===")
-
-# Use M-values for PCA (already calculated above)
-betas_for_pca_qc <- betas_top10k_qc
-mvals_for_pca_qc <- mvals_top10k_qc
-group_for_pca_qc <- group_vector
-batch_for_pca_qc <- batch_vector
-
-print("Debugging PCA setup for QC...")
-print(paste("Samples in data:", ncol(betas_for_pca_qc)))
-print(paste("CpGs in data:", nrow(betas_for_pca_qc)))
-print(paste("Length of group_for_pca:", length(group_for_pca_qc)))
-print(paste("Length of batch_for_pca:", length(batch_for_pca_qc)))
-
-print("Sample names in data (first 5):")
-print(head(colnames(betas_for_pca_qc), 5))
-print("Group vector (first 5):")
-print(head(as.character(group_for_pca_qc), 5))
-
-# Perform PCA on M-values (centered, not scaled - DESeq2 default)
-pca_result_qc <- prcomp(t(mvals_for_pca_qc), center = TRUE, scale. = FALSE)
-
-print("PCA completed successfully for QC!")
-print(paste("PCA sample names (first 5):"))
-print(head(rownames(pca_result_qc$x), 5))
-
-# Create additional grouping vectors for PCA
-genotype_for_pca_qc <- factor(matching_samples$True.Genotype)
-cross_type_for_pca_qc <- factor(matching_samples$cross.type)
-
-# Create PCA dataframe with proper alignment
-pca_df_top10k_qc <- data.frame(
-  PC1 = pca_result_qc$x[, 1],
-  PC2 = pca_result_qc$x[, 2],
-  Sample = rownames(pca_result_qc$x),
-  Tissue_Cell_Type = group_for_pca_qc[match(rownames(pca_result_qc$x), colnames(betas_for_pca_qc))],
-  Batch = batch_for_pca_qc[match(rownames(pca_result_qc$x), colnames(betas_for_pca_qc))],
-  Genotype = genotype_for_pca_qc[match(rownames(pca_result_qc$x), colnames(betas_for_pca_qc))],
-  Cross_Type = cross_type_for_pca_qc[match(rownames(pca_result_qc$x), colnames(betas_for_pca_qc))]
+contrasts_list <- c(
+  "(groupdp10_thymus_dp10 + groupdouble_thymus_dp10)/2 - (groupdp10_thymus_wt + groupdouble_thymus_wt + groupdp16_thymus_wt)/3",
+  "(groupdp16_thymus_dp16 + groupdouble_thymus_dp16)/2 - (groupdp10_thymus_wt + groupdouble_thymus_wt + groupdp16_thymus_wt)/3",
+  "groupdouble_thymus_dp10_dp16 - (groupdp10_thymus_wt + groupdouble_thymus_wt + groupdp16_thymus_wt)/3",
+  "(groupdp10_tcells_dp10 + groupdouble_tcells_dp10)/2 - (groupdp10_tcells_wt + groupdouble_tcells_wt + groupdp16_tcells_wt)/3",
+  "(groupdp16_tcells_dp16 + groupdouble_tcells_dp16)/2 - (groupdp10_tcells_wt + groupdouble_tcells_wt + groupdp16_tcells_wt)/3",
+  "groupdouble_tcells_dp10_dp16 - (groupdp10_tcells_wt + groupdouble_tcells_wt + groupdp16_tcells_wt)/3",
+  "grouprunx_thymus_dp16 - grouprunx_thymus_wt",
+  "grouprunx_thymus_2copy - grouprunx_thymus_wt",
+  "grouprunx_thymus_1copy - grouprunx_thymus_wt",
+  "grouprunx_thymocytes_2copy - grouprunx_thymocytes_wt",
+  "grouprunx_thymocytes_1copy - grouprunx_thymocytes_wt",
+  "grouprunx_thymocytes_dp16 - grouprunx_thymocytes_wt",
+  "groupTs65Dn - groupwt_for_Ts65Dn",
+  "(groupdp10_tcells_dp10_5 + groupdouble_tcells_dp10_5)/2 - (groupdp10_tcells_wt_5 + groupdouble_tcells_wt_5 + groupdp16_tcells_wt_5)/3",
+  "(groupdp16_tcells_dp16_5 + groupdouble_tcells_dp16_5)/2 - (groupdp10_tcells_wt_5 + groupdouble_tcells_wt_5 + groupdp16_tcells_wt_5)/3",
+  "groupdouble_tcells_dp10_dp16_5 - (groupdp10_tcells_wt_5 + groupdouble_tcells_wt_5 + groupdp16_tcells_wt_5)/3"
 )
 
-# Check for NAs in the PCA dataframe
-print("Checking PCA dataframe for QC:")
-print(paste("Rows in pca_df:", nrow(pca_df_top10k_qc)))
-print(paste("NAs in Tissue_Cell_Type:", sum(is.na(pca_df_top10k_qc$Tissue_Cell_Type))))
-print(paste("NAs in Batch:", sum(is.na(pca_df_top10k_qc$Batch))))
-print(paste("NAs in Genotype:", sum(is.na(pca_df_top10k_qc$Genotype))))
-print(paste("NAs in Cross_Type:", sum(is.na(pca_df_top10k_qc$Cross_Type))))
+mod <- model.matrix(~ 0 + group, data = targets)
+fit <- lmFit(betas, mod)
 
-# Plot by tissue cell type
-pdf("PCA_QC_tissue_type_top10k.pdf", width = 10, height = 8)
-p1_qc <- ggplot(pca_df_top10k_qc, aes(x = PC1, y = PC2, color = Tissue_Cell_Type)) +
-  geom_point(size = 3, alpha = 0.7) +
-  stat_ellipse(level = 0.95) +
-  labs(
-    title = "PCA on QC-filtered M-values (by Tissue Cell Type) - Top 10k CpGs",
-    x = paste0("PC1 (", round(summary(pca_result_qc)$importance[2, 1] * 100, 1), "%)"),
-    y = paste0("PC2 (", round(summary(pca_result_qc)$importance[2, 2] * 100, 1), "%)")
-  ) +
-  theme_minimal() +
-  theme(legend.position = "bottom")
-print(p1_qc)
-dev.off()
+for (i in seq_along(contrasts_list)) {
+  contrast_name <- contrast_names[i]
+  contrast_formula <- contrasts_list[i]
+  
+  cat("\n--- Running contrast", i, ":", contrast_name, "---\n")
+  
+  cont_matrix <- makeContrasts(contrasts = contrast_formula, levels = mod)
+  fit_cont <- contrasts.fit(fit, cont_matrix)
+  fit2 <- eBayes(fit_cont)
+  results <- topTable(fit2, num = Inf, coef = 1, sort.by = 'none')
+  write.csv(results, paste0("DM_", contrast_name, ".csv"), row.names = TRUE)
+  
+  sigUp <- results[which(results$P.Value < 1e-4 & results$logFC > 0.1), ]
+  sigDown <- results[which(results$P.Value < 1e-4 & results$logFC < -0.1), ]
+  notSig <- results[which(!(results$P.Value < 1e-4 & abs(results$logFC) > 0.1)), ]
+  DMPs <- results[which(results$adj.P.Val < 1e-4 & abs(results$logFC) > 0.1), ]
+  
+  # Volcano plot
+  if (plot_mode %in% c("both", "volcano")) {
+    pdf(paste0("volcano_", contrast_name, ".pdf"))
+    if (nrow(sigUp) > 0) sigUp$col <- "indianred"
+    if (nrow(sigDown) > 0) sigDown$col <- "deepskyblue3"
+    if (nrow(notSig) > 0) notSig$col <- "ivory3"
+    
+    xx <- rbind(sigUp, sigDown, notSig)
+    xx <- xx[order(xx$P.Value), ]
+    
+    plot(xx$logFC, -log10(xx$P.Value),
+         xlim = c(-0.5, 0.5),
+         col = xx$col, pch = 16,
+         ylab = "-log10(pval)",
+         xlab = paste("Effect Size (", contrast_name, ")"),
+         main = paste("Volcano Plot -", contrast_name))
+    
+    abline(h = -log10(1e-4), lty = 3)
+    abline(v = c(-0.1, 0.1), lty = 2, col = "gray50")
+    dev.off()
+  }
+  
+  # --- Z-score Heatmap Block ---
+  if (plot_mode %in% c("both", "heatmap") && nrow(DMPs) > 0) {
+    common_cpgs <- intersect(rownames(DMPs), rownames(betas))
+    if (length(common_cpgs) == 0) next
+    
+    DMPs.beta <- betas[common_cpgs, , drop = FALSE]
+    DMPs.beta <- DMPs.beta[complete.cases(DMPs.beta), , drop = FALSE]
+    
+    if (contrast_name %in% names(group_labels_map)) {
+      group_info <- group_labels_map[[contrast_name]]
+      
+      exp_groups <- gsub("^group", "", group_info$experimental)
+      ctrl_groups <- gsub("^group", "", group_info$control)
+      
+      exp_samples <- targets$Samples[targets$group %in% exp_groups]
+      ctrl_samples <- targets$Samples[targets$group %in% ctrl_groups]
+      
+      selected_samples <- c(exp_samples, ctrl_samples)
+      selected_samples <- intersect(selected_samples, colnames(DMPs.beta))
+      
+      if (length(selected_samples) > 0) {
+        DMPs.beta <- DMPs.beta[, selected_samples, drop = FALSE]
+        
+        col_annotation <- data.frame(
+          Group = c(rep(group_info$exp_label, length(exp_samples)), 
+                    rep(group_info$ctrl_label, length(ctrl_samples))),
+          row.names = selected_samples
+        )
+        
+        group_colors <- c("red", "blue")
+        names(group_colors) <- c(group_info$exp_label, group_info$ctrl_label)
+        annotation_colors <- list(Group = group_colors)
+        
+        if (nrow(DMPs.beta) > 0 && ncol(DMPs.beta) > 0) {
+          zscore_matrix <- t(scale(t(DMPs.beta)))
+          
+          row_height <- 0.02         # inches per CpG row (try 0.25 for better vertical spacing)
+          extra_padding <- 2         # inches for annotations, legends, labels
+          n_cpgs <- nrow(DMPs.beta)
+          pdf_height <- n_cpgs * row_height + extra_padding
+          
+          pdf(paste0("heatmap_zscore_", contrast_name, ".pdf"), width = 12, height = pdf_height)
+          pheatmap(zscore_matrix,
+                  cluster_rows = TRUE,
+                  cluster_cols = FALSE,
+                  show_rownames = FALSE,
+                  show_colnames = FALSE,
+                  scale = "none",
+                  treeheight_col = 0,
+                  treeheight_row = 0,
+                  annotation_col = col_annotation,
+                  annotation_colors = annotation_colors,
+                  annotation_names_col = TRUE,
+                  main = paste("Z-Score Heatmap of Significant DMPs –", contrast_name),
+                  fontsize = 10,
+                  border_color = NA)  # <--- this line removes the cell borders
+                    dev.off()
+        }
+      }
+    } else {
+      if (contrast_name %in% names(heatmap_group_map)) {
+        selected_groups <- heatmap_group_map[[contrast_name]]
+        group_names <- gsub("^group", "", selected_groups)
+        sample_mask <- targets$group %in% group_names
+        DMPs.beta <- DMPs.beta[, sample_mask, drop = FALSE]
+      }
+      
+      if (nrow(DMPs.beta) > 0 && ncol(DMPs.beta) > 0) {
+        zscore_matrix <- t(scale(t(DMPs.beta)))
+        
+        # Fixed row height
+        row_height <- 0.05  # inches per CpG row
+        n_cpgs <- nrow(zscore_matrix)
+        pdf_height <- n_cpgs * row_height
+        
+        pdf(paste0("heatmap_zscore_", contrast_name, ".pdf"), width = 12, height = pdf_height)
+        pheatmap(zscore_matrix,
+                cluster_rows = TRUE,
+                cluster_cols = TRUE,
+                show_rownames = FALSE,
+                scale = "none",
+                treeheight_col = 1,
+                treeheight_row = 0,
+                main = paste("Z-Score Heatmap of Significant DMPs –", contrast_name))
+        dev.off()
+      }
+    }
+  }
 
-# Plot by batch
-pdf("PCA_QC_batch_top10k.pdf", width = 10, height = 8)
-p2_qc <- ggplot(pca_df_top10k_qc, aes(x = PC1, y = PC2, color = Batch)) +
-  geom_point(size = 3, alpha = 0.7) +
-  stat_ellipse(level = 0.95) +
-  labs(
-    title = "PCA on QC-filtered M-values (by Batch) - Top 10k CpGs",
-    x = paste0("PC1 (", round(summary(pca_result_qc)$importance[2, 1] * 100, 1), "%)"),
-    y = paste0("PC2 (", round(summary(pca_result_qc)$importance[2, 2] * 100, 1), "%)")
-  ) +
-  theme_minimal() +
-  theme(legend.position = "bottom")
-print(p2_qc)
-dev.off()
-
-print("PCA plots (Top 10k CpGs - QC data) saved successfully!")
-
-# ---- Step 5C: PCA analysis (ALL CpGs for BMIQ + Qc (Raw data))
-
-print("=== PCA analysis (using ALL CpGs - BMIQ data) ===")
-
-# Use M-values for PCA (all CpGs)
-betas_for_pca_bmiq_all <- betas_combined
-mvals_for_pca_bmiq_all <- mvals_bmiq
-group_for_pca_bmiq_all <- group_vector
-batch_for_pca_bmiq_all <- batch_vector
-
-print("Debugging PCA setup for BMIQ (ALL CpGs)...")
-print(paste("Samples in data:", ncol(betas_for_pca_bmiq_all)))
-print(paste("CpGs in data:", nrow(betas_for_pca_bmiq_all)))
-print(paste("Length of group_for_pca:", length(group_for_pca_bmiq_all)))
-print(paste("Length of batch_for_pca:", length(batch_for_pca_bmiq_all)))
-
-print("Sample names in data (first 5):")
-print(head(colnames(betas_for_pca_bmiq_all), 5))
-print("Group vector (first 5):")
-print(head(as.character(group_for_pca_bmiq_all), 5))
-
-# Perform PCA on M-values (centered, not scaled - DESeq2 default)
-pca_result_bmiq_all <- prcomp(t(mvals_for_pca_bmiq_all), center = TRUE, scale. = FALSE)
-
-print("PCA completed successfully for BMIQ (ALL CpGs)!")
-print(paste("PCA sample names (first 5):"))
-print(head(rownames(pca_result_bmiq_all$x), 5))
-
-# Create additional grouping vectors for PCA
-genotype_for_pca_bmiq_all <- factor(matching_samples$True.Genotype)
-cross_type_for_pca_bmiq_all <- factor(matching_samples$cross.type)
-
-# Create PCA dataframe with proper alignment
-pca_df_all_bmiq <- data.frame(
-  PC1 = pca_result_bmiq_all$x[, 1],
-  PC2 = pca_result_bmiq_all$x[, 2],
-  Sample = rownames(pca_result_bmiq_all$x),
-  Tissue_Cell_Type = group_for_pca_bmiq_all[match(rownames(pca_result_bmiq_all$x), colnames(betas_for_pca_bmiq_all))],
-  Batch = batch_for_pca_bmiq_all[match(rownames(pca_result_bmiq_all$x), colnames(betas_for_pca_bmiq_all))],
-  Genotype = genotype_for_pca_bmiq_all[match(rownames(pca_result_bmiq_all$x), colnames(betas_for_pca_bmiq_all))],
-  Cross_Type = cross_type_for_pca_bmiq_all[match(rownames(pca_result_bmiq_all$x), colnames(betas_for_pca_bmiq_all))]
-)
-
-# Check for NAs in the PCA dataframe
-print("Checking PCA dataframe for BMIQ (ALL CpGs):")
-print(paste("Rows in pca_df:", nrow(pca_df_all_bmiq)))
-print(paste("NAs in Tissue_Cell_Type:", sum(is.na(pca_df_all_bmiq$Tissue_Cell_Type))))
-print(paste("NAs in Batch:", sum(is.na(pca_df_all_bmiq$Batch))))
-print(paste("NAs in Genotype:", sum(is.na(pca_df_all_bmiq$Genotype))))
-print(paste("NAs in Cross_Type:", sum(is.na(pca_df_all_bmiq$Cross_Type))))
-
-# Plot by tissue cell type
-pdf("PCA_BMIQ_tissue_type_ALL_CpGs.pdf", width = 10, height = 8)
-p1_bmiq_all <- ggplot(pca_df_all_bmiq, aes(x = PC1, y = PC2, color = Tissue_Cell_Type)) +
-  geom_point(size = 3, alpha = 0.7) +
-  stat_ellipse(level = 0.95) +
-  labs(
-    title = "PCA on BMIQ Normalized M-values (by Tissue Cell Type) - ALL CpGs",
-    x = paste0("PC1 (", round(summary(pca_result_bmiq_all)$importance[2, 1] * 100, 1), "%)"),
-    y = paste0("PC2 (", round(summary(pca_result_bmiq_all)$importance[2, 2] * 100, 1), "%)")
-  ) +
-  theme_minimal() +
-  theme(legend.position = "bottom")
-print(p1_bmiq_all)
-dev.off()
-
-# Plot by batch
-pdf("PCA_BMIQ_batch_ALL_CpGs.pdf", width = 10, height = 8)
-p2_bmiq_all <- ggplot(pca_df_all_bmiq, aes(x = PC1, y = PC2, color = Batch)) +
-  geom_point(size = 3, alpha = 0.7) +
-  stat_ellipse(level = 0.95) +
-  labs(
-    title = "PCA on BMIQ Normalized M-values (by Batch) - ALL CpGs",
-    x = paste0("PC1 (", round(summary(pca_result_bmiq_all)$importance[2, 1] * 100, 1), "%)"),
-    y = paste0("PC2 (", round(summary(pca_result_bmiq_all)$importance[2, 2] * 100, 1), "%)")
-  ) +
-  theme_minimal() +
-  theme(legend.position = "bottom")
-print(p2_bmiq_all)
-dev.off()
-
-print("PCA plots (ALL CpGs - BMIQ data) saved successfully!")
-
-print("=== PCA analysis (using ALL CpGs - QC data) ===")
-
-# Use M-values for PCA (all CpGs)
-betas_for_pca_qc_all <- betas_qc_combined
-mvals_for_pca_qc_all <- mvals_qc
-group_for_pca_qc_all <- group_vector
-batch_for_pca_qc_all <- batch_vector
-
-print("Debugging PCA setup for QC (ALL CpGs)...")
-print(paste("Samples in data:", ncol(betas_for_pca_qc_all)))
-print(paste("CpGs in data:", nrow(betas_for_pca_qc_all)))
-print(paste("Length of group_for_pca:", length(group_for_pca_qc_all)))
-print(paste("Length of batch_for_pca:", length(batch_for_pca_qc_all)))
-
-print("Sample names in data (first 5):")
-print(head(colnames(betas_for_pca_qc_all), 5))
-print("Group vector (first 5):")
-print(head(as.character(group_for_pca_qc_all), 5))
-
-# Perform PCA on M-values (centered, not scaled - DESeq2 default)
-pca_result_qc_all <- prcomp(t(mvals_for_pca_qc_all), center = TRUE, scale. = FALSE)
-
-print("PCA completed successfully for QC (ALL CpGs)!")
-print(paste("PCA sample names (first 5):"))
-print(head(rownames(pca_result_qc_all$x), 5))
-
-# Create additional grouping vectors for PCA
-genotype_for_pca_qc_all <- factor(matching_samples$True.Genotype)
-cross_type_for_pca_qc_all <- factor(matching_samples$cross.type)
-
-# Create PCA dataframe with proper alignment
-pca_df_all_qc <- data.frame(
-  PC1 = pca_result_qc_all$x[, 1],
-  PC2 = pca_result_qc_all$x[, 2],
-  Sample = rownames(pca_result_qc_all$x),
-  Tissue_Cell_Type = group_for_pca_qc_all[match(rownames(pca_result_qc_all$x), colnames(betas_for_pca_qc_all))],
-  Batch = batch_for_pca_qc_all[match(rownames(pca_result_qc_all$x), colnames(betas_for_pca_qc_all))],
-  Genotype = genotype_for_pca_qc_all[match(rownames(pca_result_qc_all$x), colnames(betas_for_pca_qc_all))],
-  Cross_Type = cross_type_for_pca_qc_all[match(rownames(pca_result_qc_all$x), colnames(betas_for_pca_qc_all))]
-)
-
-# Check for NAs in the PCA dataframe
-print("Checking PCA dataframe for QC (ALL CpGs):")
-print(paste("Rows in pca_df:", nrow(pca_df_all_qc)))
-print(paste("NAs in Tissue_Cell_Type:", sum(is.na(pca_df_all_qc$Tissue_Cell_Type))))
-print(paste("NAs in Batch:", sum(is.na(pca_df_all_qc$Batch))))
-print(paste("NAs in Genotype:", sum(is.na(pca_df_all_qc$Genotype))))
-print(paste("NAs in Cross_Type:", sum(is.na(pca_df_all_qc$Cross_Type))))
-
-# Plot by tissue cell type
-pdf("PCA_QC_tissue_type_ALL_CpGs.pdf", width = 10, height = 8)
-p1_qc_all <- ggplot(pca_df_all_qc, aes(x = PC1, y = PC2, color = Tissue_Cell_Type)) +
-  geom_point(size = 3, alpha = 0.7) +
-  stat_ellipse(level = 0.95) +
-  labs(
-    title = "PCA on QC-filtered M-values (by Tissue Cell Type) - ALL CpGs",
-    x = paste0("PC1 (", round(summary(pca_result_qc_all)$importance[2, 1] * 100, 1), "%)"),
-    y = paste0("PC2 (", round(summary(pca_result_qc_all)$importance[2, 2] * 100, 1), "%)")
-  ) +
-  theme_minimal() +
-  theme(legend.position = "bottom")
-print(p1_qc_all)
-dev.off()
-
-# Plot by batch
-pdf("PCA_QC_batch_ALL_CpGs.pdf", width = 10, height = 8)
-p2_qc_all <- ggplot(pca_df_all_qc, aes(x = PC1, y = PC2, color = Batch)) +
-  geom_point(size = 3, alpha = 0.7) +
-  stat_ellipse(level = 0.95) +
-  labs(
-    title = "PCA on QC-filtered M-values (by Batch) - ALL CpGs",
-    x = paste0("PC1 (", round(summary(pca_result_qc_all)$importance[2, 1] * 100, 1), "%)"),
-    y = paste0("PC2 (", round(summary(pca_result_qc_all)$importance[2, 2] * 100, 1), "%)")
-  ) +
-  theme_minimal() +
-  theme(legend.position = "bottom")
-print(p2_qc_all)
-dev.off()
-
-print("PCA plots (ALL CpGs - QC data) saved successfully!")
+  cat("Hypermethylated (p < 1e-4):", nrow(sigUp), "\n")
+  cat("Hypomethylated (p < 1e-4):", nrow(sigDown), "\n")
+  cat("Not significant:", nrow(notSig), "\n")
+  cat("Significant DMPs (FDR < 1e-4 & |logFC| > 0.1):", nrow(DMPs), "\n")
+}
