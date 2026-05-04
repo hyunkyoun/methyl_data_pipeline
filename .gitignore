@@ -24,6 +24,7 @@ idat
 
 packages
 new_idat
+FASTA_sequences/
 temp_run.R
 
 results
