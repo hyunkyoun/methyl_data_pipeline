@@ -401,6 +401,173 @@ group_labels_map <- list(
   )
 )
 
+betas <- betas_top_combat
+targets <- matching_samples
+
+contrast_names <- c(
+  "dp10_vs_WT_thymus1", "dp16_vs_WT_thymus1", "dp16_dp10_vs_WT_thymus1",
+  "dp10_vs_WT_tcells2", "dp16_vs_WT_tcells2", "dp16_dp10_vs_WT_tcells2",
+  "dp16_vs_WT_thymus3", "runx1_dp16_vs_WT_thymus3", "runx1_vs_WT_thymus3",
+  "runx1_dp16_vs_WT_thymocytes4", "runx1_vs_WT_thymocytes4", "dp16_vs_WT_thymocytes4",
+  "Ts65Dn_vs_WT_thymocytes5", "dp10_vs_WT_thymus7", "dp16_vs_WT_thymus7", "dp16_dp10_vs_WT_thymus7"
+)
+
+contrasts_list <- c(
+  "(groupdp10_thymus_dp10 + groupdouble_thymus_dp10)/2 - (groupdp10_thymus_wt + groupdouble_thymus_wt + groupdp16_thymus_wt)/3",
+  "(groupdp16_thymus_dp16 + groupdouble_thymus_dp16)/2 - (groupdp10_thymus_wt + groupdouble_thymus_wt + groupdp16_thymus_wt)/3",
+  "groupdouble_thymus_dp10_dp16 - (groupdp10_thymus_wt + groupdouble_thymus_wt + groupdp16_thymus_wt)/3",
+  "(groupdp10_tcells_dp10 + groupdouble_tcells_dp10)/2 - (groupdp10_tcells_wt + groupdouble_tcells_wt + groupdp16_tcells_wt)/3",
+  "(groupdp16_tcells_dp16 + groupdouble_tcells_dp16)/2 - (groupdp10_tcells_wt + groupdouble_tcells_wt + groupdp16_tcells_wt)/3",
+  "groupdouble_tcells_dp10_dp16 - (groupdp10_tcells_wt + groupdouble_tcells_wt + groupdp16_tcells_wt)/3",
+  "grouprunx_thymus_dp16 - grouprunx_thymus_wt",
+  "grouprunx_thymus_2copy - grouprunx_thymus_wt",
+  "grouprunx_thymus_1copy - grouprunx_thymus_wt",
+  "grouprunx_thymocytes_2copy - grouprunx_thymocytes_wt",
+  "grouprunx_thymocytes_1copy - grouprunx_thymocytes_wt",
+  "grouprunx_thymocytes_dp16 - grouprunx_thymocytes_wt",
+  "groupTs65Dn - groupwt_for_Ts65Dn",
+  "(groupdp10_tcells_dp10_5 + groupdouble_tcells_dp10_5)/2 - (groupdp10_tcells_wt_5 + groupdouble_tcells_wt_5 + groupdp16_tcells_wt_5)/3",
+  "(groupdp16_tcells_dp16_5 + groupdouble_tcells_dp16_5)/2 - (groupdp10_tcells_wt_5 + groupdouble_tcells_wt_5 + groupdp16_tcells_wt_5)/3",
+  "groupdouble_tcells_dp10_dp16_5 - (groupdp10_tcells_wt_5 + groupdouble_tcells_wt_5 + groupdp16_tcells_wt_5)/3"
+)
+
+mod <- model.matrix(~ 0 + group, data = targets)
+fit <- lmFit(betas, mod)
+
+for (i in seq_along(contrasts_list)) {
+  contrast_name <- contrast_names[i]
+  contrast_formula <- contrasts_list[i]
+  
+  cat("\n--- Running contrast", i, ":", contrast_name, "---\n")
+  
+  cont_matrix <- makeContrasts(contrasts = contrast_formula, levels = mod)
+  fit_cont <- contrasts.fit(fit, cont_matrix)
+  fit2 <- eBayes(fit_cont)
+  results <- topTable(fit2, num = Inf, coef = 1, sort.by = 'none')
+  write.csv(results, paste0("DM_", contrast_name, ".csv"), row.names = TRUE)
+  
+  sigUp <- results[which(results$P.Value < 1e-4 & results$logFC > 0.1), ]
+  sigDown <- results[which(results$P.Value < 1e-4 & results$logFC < -0.1), ]
+  notSig <- results[which(!(results$P.Value < 1e-4 & abs(results$logFC) > 0.1)), ]
+  DMPs <- results[which(results$adj.P.Val < 1e-4 & abs(results$logFC) > 0.1), ]
+  
+  # Volcano plot
+  if (plot_mode %in% c("both", "volcano")) {
+    pdf(paste0("volcano_", contrast_name, ".pdf"))
+    if (nrow(sigUp) > 0) sigUp$col <- "indianred"
+    if (nrow(sigDown) > 0) sigDown$col <- "deepskyblue3"
+    if (nrow(notSig) > 0) notSig$col <- "ivory3"
+    
+    xx <- rbind(sigUp, sigDown, notSig)
+    xx <- xx[order(xx$P.Value), ]
+    
+    plot(xx$logFC, -log10(xx$P.Value),
+         xlim = c(-0.5, 0.5),
+         col = xx$col, pch = 16,
+         ylab = "-log10(pval)",
+         xlab = paste("Effect Size (", contrast_name, ")"),
+         main = paste("Volcano Plot -", contrast_name))
+    
+    abline(h = -log10(1e-4), lty = 3)
+    abline(v = c(-0.1, 0.1), lty = 2, col = "gray50")
+    dev.off()
+  }
+  
+  # --- Z-score Heatmap Block ---
+  if (plot_mode %in% c("both", "heatmap") && nrow(DMPs) > 0) {
+    common_cpgs <- intersect(rownames(DMPs), rownames(betas))
+    if (length(common_cpgs) == 0) next
+    
+    DMPs.beta <- betas[common_cpgs, , drop = FALSE]
+    DMPs.beta <- DMPs.beta[complete.cases(DMPs.beta), , drop = FALSE]
+    
+    if (contrast_name %in% names(group_labels_map)) {
+      group_info <- group_labels_map[[contrast_name]]
+      
+      exp_groups <- gsub("^group", "", group_info$experimental)
+      ctrl_groups <- gsub("^group", "", group_info$control)
+      
+      exp_samples <- targets$Samples[targets$group %in% exp_groups]
+      ctrl_samples <- targets$Samples[targets$group %in% ctrl_groups]
+      
+      selected_samples <- c(exp_samples, ctrl_samples)
+      selected_samples <- intersect(selected_samples, colnames(DMPs.beta))
+      
+      if (length(selected_samples) > 0) {
+        DMPs.beta <- DMPs.beta[, selected_samples, drop = FALSE]
+        
+        col_annotation <- data.frame(
+          Group = c(rep(group_info$exp_label, length(exp_samples)), 
+                    rep(group_info$ctrl_label, length(ctrl_samples))),
+          row.names = selected_samples
+        )
+        
+        group_colors <- c("red", "blue")
+        names(group_colors) <- c(group_info$exp_label, group_info$ctrl_label)
+        annotation_colors <- list(Group = group_colors)
+        
+        if (nrow(DMPs.beta) > 0 && ncol(DMPs.beta) > 0) {
+          zscore_matrix <- t(scale(t(DMPs.beta)))
+          
+          row_height <- 0.02         # inches per CpG row (try 0.25 for better vertical spacing)
+          extra_padding <- 2         # inches for annotations, legends, labels
+          n_cpgs <- nrow(DMPs.beta)
+          pdf_height <- n_cpgs * row_height + extra_padding
+          
+          pdf(paste0("heatmap_zscore_", contrast_name, ".pdf"), width = 12, height = pdf_height)
+          pheatmap(zscore_matrix,
+                  cluster_rows = TRUE,
+                  cluster_cols = FALSE,
+                  show_rownames = FALSE,
+                  show_colnames = FALSE,
+                  scale = "none",
+                  treeheight_col = 0,
+                  treeheight_row = 0,
+                  annotation_col = col_annotation,
+                  annotation_colors = annotation_colors,
+                  annotation_names_col = TRUE,
+                  main = paste("Z-Score Heatmap of Significant DMPs –", contrast_name),
+                  fontsize = 10,
+                  border_color = NA)  # <--- this line removes the cell borders
+                    dev.off()
+        }
+      }
+    } else {
+      if (contrast_name %in% names(heatmap_group_map)) {
+        selected_groups <- heatmap_group_map[[contrast_name]]
+        group_names <- gsub("^group", "", selected_groups)
+        sample_mask <- targets$group %in% group_names
+        DMPs.beta <- DMPs.beta[, sample_mask, drop = FALSE]
+      }
+      
+      if (nrow(DMPs.beta) > 0 && ncol(DMPs.beta) > 0) {
+        zscore_matrix <- t(scale(t(DMPs.beta)))
+        
+        # Fixed row height
+        row_height <- 0.05  # inches per CpG row
+        n_cpgs <- nrow(zscore_matrix)
+        pdf_height <- n_cpgs * row_height
+        
+        pdf(paste0("heatmap_zscore_", contrast_name, ".pdf"), width = 12, height = pdf_height)
+        pheatmap(zscore_matrix,
+                cluster_rows = TRUE,
+                cluster_cols = TRUE,
+                show_rownames = FALSE,
+                scale = "none",
+                treeheight_col = 1,
+                treeheight_row = 0,
+                main = paste("Z-Score Heatmap of Significant DMPs –", contrast_name))
+        dev.off()
+      }
+    }
+  }
+
+  cat("Hypermethylated (p < 1e-4):", nrow(sigUp), "\n")
+  cat("Hypomethylated (p < 1e-4):", nrow(sigDown), "\n")
+  cat("Not significant:", nrow(notSig), "\n")
+  cat("Significant DMPs (FDR < 1e-4 & |logFC| > 0.1):", nrow(DMPs), "\n")
+}
+
 # ---- Function for extracting FASTA sequences from DMPs ----
 
 extract_and_write_FASTA <- function(DMPs, contrast_name, annoMouse, genome) {
