@@ -1,30 +1,51 @@
+# Raw IDAT files and local sample metadata (current and legacy folders)
+idats/
+idat/
+new_idat/
+data/
+*.idat
+*.idat.gz
+
+# Generated analyses, including every dated run under results/
+results/
+plots/
+plots_25k/
+plots_10k/
+plots_genotype/
+plots_10k_genotype/
+FASTA_sequences/
+
+# Local data exports and archives (also covers older scripts' loose outputs)
+*.csv
+*.xlsx
+*.pdf
+*.png
+*.fasta
+*.fasta.gz
 *.txt
 *.json
-*.xlsx
-*.RData
-*.Rd
-*.pdf
-*.csv
 *.zip
-*.png
 
-plots
-plots_25k
-plots_10k
-data
-__pycache__
-.DS_Store
-
-filtered_beta_matrix.csv
-idat
-
-.venv
-.RData
+# Saved R objects and session state; BMIQ also writes binary .Rd files
+*.RData
+*.Rdata
+*.rdata
+*.rds
+*.Rds
+*.RDS
+*.Rd
 .Rhistory
+.Rapp.history
+.Rproj.user/
 
-packages
-new_idat
-FASTA_sequences/
+# Local package libraries, Python environments, and caches
+packages/
+.venv/
+__pycache__/
+*.py[cod]
+
+# Temporary scripts and operating-system files
 temp_run.R
-
-results
+.DS_Store
+Thumbs.db
+Desktop.ini
